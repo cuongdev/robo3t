@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 #include <QSet>
 #include <QDir>
@@ -156,6 +157,15 @@ namespace Robomongo
 
         void setShellTimeoutSec(int newValue) { _shellTimeoutSec = std::abs(newValue); }
 
+        // App name reported to MongoDB by connections that do not set their own
+        std::string defaultAppName() const { return _defaultAppName; }
+        void setDefaultAppName(std::string const& appName) { _defaultAppName = appName; }
+
+        /**
+         * @brief Distinct non-empty connection namespaces, sorted case-insensitively
+         */
+        QStringList connectionNamespaces() const;
+
         // True when settings from previous versions of Robomongo are imported
         void setImported(bool imported) { _imported = imported; }
         bool imported() const { return _imported; }
@@ -231,6 +241,7 @@ namespace Robomongo
 
         int _mongoTimeoutSec;
         int _shellTimeoutSec;
+        std::string _defaultAppName;
 
         // True when settings from previous versions of Robomongo are imported
         bool _imported;

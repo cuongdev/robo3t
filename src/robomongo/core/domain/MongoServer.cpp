@@ -312,7 +312,8 @@ namespace Robomongo {
                                   AppRegistry::instance().settingsManager()->loadMongoRcJs(),
                                   AppRegistry::instance().settingsManager()->batchSize(),
                                   AppRegistry::instance().settingsManager()->mongoTimeoutSec(),
-                                  AppRegistry::instance().settingsManager()->shellTimeoutSec());
+                                  AppRegistry::instance().settingsManager()->shellTimeoutSec(),
+                                  AppRegistry::instance().settingsManager()->defaultAppName());
     }
 
     void MongoServer::handle(CreateDatabaseResponse *event) 

@@ -18,6 +18,7 @@ set(SOURCES
     core/utils/BsonUtils.cpp
     core/settings/CredentialSettings.cpp
     core/settings/ConnectionSettings.cpp
+    core/settings/ConnectionsBackup.cpp
     core/Event.cpp
     core/Enums.cpp
     core/EventError.cpp
@@ -160,6 +161,7 @@ target_link_libraries(robomongo
         qscintilla
         mongodb
         ssh
+        crypto              # OpenSSL, used directly by ConnectionsBackup
         Threads::Threads)   # Target from FindThreads CMake module
 
 if(APPLE)

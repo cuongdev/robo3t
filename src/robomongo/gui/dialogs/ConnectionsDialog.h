@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDialog>
+#include <QSet>
 #include <QTreeWidget>
 
 #include "robomongo/core/Core.h"
@@ -41,11 +42,6 @@ namespace Robomongo
         */
         void reject() override;
 
-        /**
-        * @brief Add connection to the list widget
-        */
-        void add(ConnectionSettings *connection);
-
     private Q_SLOTS:
         void linkActivated(const QString &link);
 
@@ -73,13 +69,42 @@ namespace Robomongo
         void clone();
 
         /**
+         * @brief Asks for a namespace and moves the selected connection into it
+         */
+        void moveToNamespace();
+
+        /**
+         * @brief Saves all connections to a backup file
+         */
+        void exportConnections();
+
+        /**
+         * @brief Adds connections from a backup file, skipping ones already in the list
+         */
+        void importConnections();
+
+        /**
          * @brief Handles ListWidget layoutChanged() signal
          */
         void listWidget_layoutChanged();
 
+        void listWidget_itemExpanded(QTreeWidgetItem *item);
+        void listWidget_itemCollapsed(QTreeWidgetItem *item);
+
         void keyPressEvent(QKeyEvent* event) override;
 
     private:
+        /**
+         * @brief Rebuilds the list: namespace groups first (sorted), then connections without
+         * a namespace. Selects 'selected', or the last connection when it is null.
+         */
+        void populate(ConnectionSettings *selected);
+
+        /**
+         * @brief Namespace of the selected group or connection, empty if none
+         */
+        QString currentNamespace() const;
+
         /**
          * @brief ConnectionSettings, that was selected after pressing on
          * "Connect" button
@@ -101,6 +126,11 @@ namespace Robomongo
          * ConnectionListWidgetItem*
          */
         ConnectionListItemContainerType _connectionItems;
+
+        /**
+         * @brief Namespaces the user collapsed, remembered between sessions
+         */
+        QSet<QString> _collapsedNamespaces;
 
         bool _checkForImported;
     };    

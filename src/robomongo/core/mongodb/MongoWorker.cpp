@@ -34,7 +34,8 @@ namespace Robomongo
     std::string const APP_NAME_VERSION { "robo3t-" + APP_VERSION };
 
     MongoWorker::MongoWorker(ConnectionSettings *connection, bool isLoadMongoRcJs, int batchSize,
-                             double mongoTimeoutSec, int shellTimeoutSec, QObject *parent) 
+                             double mongoTimeoutSec, int shellTimeoutSec,
+                             std::string const& defaultAppName, QObject *parent)
         : QObject(parent),
         _scriptEngine(nullptr),
         _isLoadMongoRcJs(isLoadMongoRcJs),
@@ -43,6 +44,7 @@ namespace Robomongo
         _dbAutocompleteCacheTimerId(-1),
         _mongoTimeoutSec(mongoTimeoutSec),
         _shellTimeoutSec(shellTimeoutSec),
+        _defaultAppName(defaultAppName),
         _isQuiting(0),
         _dbclient(nullptr),
         _dbclientRepSet(nullptr),
@@ -112,7 +114,9 @@ namespace Robomongo
     void MongoWorker::init()
     {        
         try {
-            _scriptEngine.reset(new ScriptEngine(_connSettings, _shellTimeoutSec));
+            // No fallback here, so the shell keeps its own default name when nothing is set
+            _scriptEngine.reset(new ScriptEngine(_connSettings, _shellTimeoutSec,
+                                                 _connSettings->effectiveAppName(_defaultAppName, "")));
             _scriptEngine->init(_isLoadMongoRcJs);
             _scriptEngine->use(_connSettings->defaultDatabase());
             _scriptEngine->setBatchSize(_batchSize);
@@ -329,6 +333,11 @@ namespace Robomongo
             return _connSettings->primaryCredential()->databaseName();
 
         return std::string();
+    }
+
+    std::string MongoWorker::getAppName() const
+    {
+        return _connSettings->effectiveAppName(_defaultAppName, APP_NAME_VERSION);
     }
 
     std::vector<std::string> MongoWorker::getDatabaseNamesSafe(EstablishConnectionRequest* event /*= nullptr*/)
@@ -954,7 +963,7 @@ namespace Robomongo
             // Step-2: Try connect to replica set with set name
             auto const& membersHostsAndPorts = _connSettings->replicaSetSettings()->membersToHostAndPort();
             _dbclientRepSet.reset(new mongo::DBClientReplicaSet {
-                 setName, membersHostsAndPorts, APP_NAME_VERSION, _mongoTimeoutSec                 
+                 setName, membersHostsAndPorts, getAppName(), _mongoTimeoutSec                 
             });
                 
             if (!_dbclientRepSet->connect()) 
@@ -969,7 +978,7 @@ namespace Robomongo
             // Timeout for operations
             // Connect timeout is fixed, but short, at 5 seconds (see headers for DBClientConnection)
             _dbclient.reset(new mongo::DBClientConnection { true, _mongoTimeoutSec });
-            mongo::Status const& status = _dbclient->connect(_connSettings->hostAndPort(), APP_NAME_VERSION);
+            mongo::Status const& status = _dbclient->connect(_connSettings->hostAndPort(), getAppName());
             if (!status.isOK() && mayReturnNull) 
                 return { nullptr, status.reason() };
             else 
@@ -1084,7 +1093,7 @@ namespace Robomongo
         // Try connecting to the nodes one by one until getting replica set name.
         for (auto const& node : _connSettings->replicaSetSettings()->membersToHostAndPort())
         {
-            if (!dbclientTemp->connect(node, APP_NAME_VERSION).isOK())
+            if (!dbclientTemp->connect(node, getAppName()).isOK())
                 return "";
 
             _scriptEngine->init(_isLoadMongoRcJs, node.toString());

@@ -79,6 +79,8 @@ namespace Robomongo
         setServerHost(QtUtils::toStdString(map.value("serverHost").toString().left(maxLength)));
         setServerPort(map.value("serverPort").toInt());
         setDefaultDatabase(QtUtils::toStdString(map.value("defaultDatabase").toString()));
+        setAppName(QtUtils::toStdString(map.value("appName").toString()));
+        setConnectionNamespace(QtUtils::toStdString(map.value("namespace").toString()));
         setReplicaSet(map.value("isReplicaSet").toBool());       
         
         QVariantList list = map.value("credentials").toList();
@@ -140,6 +142,8 @@ namespace Robomongo
         setServerHost(source->serverHost());
         setServerPort(source->serverPort());
         setDefaultDatabase(source->defaultDatabase());
+        setAppName(source->appName());
+        setConnectionNamespace(source->connectionNamespace());
         setImported(source->imported());
         setReplicaSet(source->isReplicaSet());
 
@@ -168,6 +172,8 @@ namespace Robomongo
         map.insert("serverHost", QtUtils::toQString(serverHost()));
         map.insert("serverPort", serverPort());
         map.insert("defaultDatabase", QtUtils::toQString(defaultDatabase()));
+        map.insert("appName", QtUtils::toQString(appName()));
+        map.insert("namespace", QtUtils::toQString(connectionNamespace()));
         map.insert("isReplicaSet", isReplicaSet());
         if (isReplicaSet())
             map.insert("replicaSet", _replicaSetSettings->toVariant());

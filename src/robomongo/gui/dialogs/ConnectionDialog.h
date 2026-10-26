@@ -35,6 +35,7 @@ namespace Robomongo
             AuthMechanism authMech
         );
         void setDefaultDb(QString const& defaultDb);
+        void setAppName(QString const& appName);
         void toggleSshSupport(bool isReplicaSet);
         void clearConnAuthTab();
         

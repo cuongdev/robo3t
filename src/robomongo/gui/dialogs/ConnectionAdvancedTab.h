@@ -18,8 +18,9 @@ namespace Robomongo
 
     public:
         ConnectionAdvancedTab(ConnectionSettings *settings);
-        void accept();
+        bool accept();
         void setDefaultDb(const QString& defaultDb);
+        void setAppName(const QString& appName);
 
     /* --- Disabling unfinished export URI connection string feature
     private Q_SLOTS :
@@ -30,6 +31,7 @@ namespace Robomongo
 
     private:
         QLineEdit *_defaultDatabaseName;
+        QLineEdit *_appName;
 
         /* --- Disabling unfinished export URI connection string feature
         QLineEdit *_uriString;

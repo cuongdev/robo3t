@@ -25,7 +25,8 @@ namespace Robomongo
 
     public:        
         explicit MongoWorker(ConnectionSettings *connection, bool isLoadMongoRcJs, int batchSize,
-                             double mongoTimeoutSec, int shellTimeoutSec, QObject *parent = nullptr);
+                             double mongoTimeoutSec, int shellTimeoutSec,
+                             std::string const& defaultAppName, QObject *parent = nullptr);
 
         ~MongoWorker();
         void interrupt();
@@ -141,6 +142,9 @@ namespace Robomongo
         std::vector<std::string> getDatabaseNamesSafe(EstablishConnectionRequest* event = nullptr);
         std::string getAuthBase() const;
 
+        // App name of the connection, else the global default, else APP_NAME_VERSION
+        std::string getAppName() const;
+
         // Returns a pair of DBClientBase* connection and error string
         std::pair<mongo::DBClientBase*, std::string> getConnection(bool mayReturnNull = false);
         MongoClient *getClient();
@@ -189,6 +193,7 @@ namespace Robomongo
         int _dbAutocompleteCacheTimerId;
         double _mongoTimeoutSec;
         int _shellTimeoutSec;
+        std::string const _defaultAppName;
         QAtomicInteger<int> _isQuiting;
 
         std::unique_ptr<mongo::DBClientConnection> _dbclient;

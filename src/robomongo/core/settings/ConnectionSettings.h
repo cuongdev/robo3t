@@ -81,6 +81,34 @@ namespace Robomongo
         void setDefaultDatabase(const std::string &defaultDatabase) { _defaultDatabase = defaultDatabase; }
 
         /**
+         * @brief Application name sent to the server in client metadata.
+         * Empty means the built-in default is used.
+         */
+        std::string appName() const { return _appName; }
+        void setAppName(const std::string &appName) { _appName = appName; }
+
+        // MongoDB rejects client metadata whose application name is longer than this
+        static constexpr int MaxAppNameBytes = 128;
+
+        /**
+         * @brief App name to report: this connection's own if set, otherwise 'defaultAppName'
+         * (the global setting), otherwise 'fallback'.
+         */
+        std::string effectiveAppName(const std::string &defaultAppName, const std::string &fallback) const
+        {
+            if (!_appName.empty())
+                return _appName;
+
+            return defaultAppName.empty() ? fallback : defaultAppName;
+        }
+
+        /**
+         * @brief Namespace (group) shown in the connections list. Empty means no namespace.
+         */
+        std::string connectionNamespace() const { return _namespace; }
+        void setConnectionNamespace(const std::string &ns) { _namespace = ns; }
+
+        /**
          * Was this connection imported from somewhere?
          */
         bool imported() const { return _imported; }
@@ -158,6 +186,8 @@ namespace Robomongo
         std::string _host;
         int _port;
         std::string _defaultDatabase;
+        std::string _appName;
+        std::string _namespace;
         mutable QList<CredentialSettings *> _credentials;
         std::unique_ptr<SshSettings> _sshSettings;
         std::unique_ptr<SslSettings> _sslSettings;

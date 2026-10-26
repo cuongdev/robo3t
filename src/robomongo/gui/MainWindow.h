@@ -116,6 +116,7 @@ namespace Robomongo
         void checkUpdates();
         void toggleCheckUpdates();
         void openShellTimeoutDialog();
+        void openDefaultAppNameDialog();
 
     private:
         void updateConnectionsMenu();

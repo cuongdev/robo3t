@@ -12,9 +12,20 @@
 #include <QApplication>
 #include <QSettings>
 #include <QUuid>
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QFileDialog>
+#include <QSaveFile>
+#include <QFile>
+#include <QDir>
+#include <QDate>
+#include <QHash>
+
+#include <algorithm>
 
 #include "robomongo/core/AppRegistry.h"
 #include "robomongo/core/settings/ConnectionSettings.h"
+#include "robomongo/core/settings/ConnectionsBackup.h"
 #include "robomongo/core/settings/ReplicaSetSettings.h"
 #include "robomongo/core/settings/SettingsManager.h"
 #include "robomongo/core/settings/SslSettings.h"
@@ -42,7 +53,12 @@ namespace Robomongo
         /**
          * @brief Creates ConnectionListWidgetItem with specified ConnectionSettings
          */
-        ConnectionListWidgetItem(ConnectionSettings *connection) { setConnection(connection); }
+        ConnectionListWidgetItem(ConnectionSettings *connection)
+        {
+            setConnection(connection);
+            // Not a drop target, so connections never nest under each other
+            setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsDragEnabled);
+        }
 
         /**
          * @brief Returns attached ConnectionSettings.
@@ -105,6 +121,30 @@ namespace Robomongo
         ConnectionSettings *_connection;
     };
 
+    /**
+     * @brief Namespace (group) row. Connections dropped on it move into the namespace.
+     */
+    class ConnectionGroupWidgetItem : public QTreeWidgetItem
+    {
+    public:
+        explicit ConnectionGroupWidgetItem(QString const& name) : _name(name)
+        {
+            setIcon(0, GuiRegistry::instance().folderIcon());
+            QFont boldFont = font(0);
+            boldFont.setBold(true);
+            setFont(0, boldFont);
+            // Can take drops, but cannot be dragged itself
+            setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsDropEnabled);
+        }
+
+        QString name() const { return _name; }
+
+        void updateText() { setText(0, QString("%1 (%2)").arg(_name).arg(childCount())); }
+
+    private:
+        QString const _name;
+    };
+
 
 
     /* ------------------------ ConnectionsDialog ------------------------ */
@@ -133,12 +173,31 @@ namespace Robomongo
         QAction *removeAction = new QAction("&Remove...", this);
         VERIFY(connect(removeAction, SIGNAL(triggered()), this, SLOT(remove())));
 
+        QAction *moveToNamespaceAction = new QAction("&Move to Namespace...", this);
+        VERIFY(connect(moveToNamespaceAction, SIGNAL(triggered()), this, SLOT(moveToNamespace())));
+
+        QAction *importAction = new QAction("&Import...", this);
+        VERIFY(connect(importAction, SIGNAL(triggered()), this, SLOT(importConnections())));
+
+        QAction *exportAction = new QAction("E&xport All...", this);
+        VERIFY(connect(exportAction, SIGNAL(triggered()), this, SLOT(exportConnections())));
+
+        auto newSeparator = [this]() {
+            auto separator = new QAction(this);
+            separator->setSeparator(true);
+            return separator;
+        };
+
+        for (auto const& ns : getSetting("ConnectionsDialog/collapsedNamespaces").toStringList())
+            _collapsedNamespaces.insert(ns);
+
         _listWidget = new ConnectionsTreeWidget;
         GuiRegistry::instance().setAlternatingColor(_listWidget);
 #if defined(Q_OS_MAC)
         _listWidget->setAttribute(Qt::WA_MacShowFocusRect, false);
 #endif
-        _listWidget->setIndentation(5);
+        // Wide enough to show connections nested under their namespace
+        _listWidget->setIndentation(16);
 
         QStringList colums;
         colums << "Name" << "Address" << "Attributes" << "Auth. Database / User";
@@ -155,13 +214,24 @@ namespace Robomongo
         _listWidget->addAction(editAction);
         _listWidget->addAction(cloneAction);
         _listWidget->addAction(removeAction);
+        _listWidget->addAction(newSeparator());
+        _listWidget->addAction(moveToNamespaceAction);
+        _listWidget->addAction(newSeparator());
+        _listWidget->addAction(importAction);
+        _listWidget->addAction(exportAction);
         _listWidget->setSelectionMode(QAbstractItemView::SingleSelection); // single item can be draged or droped
         _listWidget->setDragEnabled(true);
         _listWidget->setDragDropMode(QAbstractItemView::InternalMove);
         _listWidget->setMinimumHeight(290);
         _listWidget->setMinimumWidth(630);
         VERIFY(connect(_listWidget, SIGNAL(itemDoubleClicked(QTreeWidgetItem*, int)), this, SLOT(accept())));
-        VERIFY(connect(_listWidget, SIGNAL(layoutChanged()), this, SLOT(listWidget_layoutChanged())));
+        // Queued: the handler rebuilds the tree, which must not happen inside the drop event
+        VERIFY(connect(_listWidget, SIGNAL(layoutChanged()), this, SLOT(listWidget_layoutChanged()),
+                       Qt::QueuedConnection));
+        VERIFY(connect(_listWidget, SIGNAL(itemExpanded(QTreeWidgetItem*)),
+                       this, SLOT(listWidget_itemExpanded(QTreeWidgetItem*))));
+        VERIFY(connect(_listWidget, SIGNAL(itemCollapsed(QTreeWidgetItem*)),
+                       this, SLOT(listWidget_itemCollapsed(QTreeWidgetItem*))));
 
         QDialogButtonBox *buttonBox = new QDialogButtonBox(this);
         buttonBox->setOrientation(Qt::Horizontal);
@@ -197,8 +267,10 @@ namespace Robomongo
             "<a style='color: %1' href='create'>Create</a>, "
             "<a style='color: %1' href='edit'>edit</a>, "
             "<a style='color: %1' href='remove'>remove</a>, "
-            "<a style='color: %1' href='clone'>clone</a> "
-            "or reorder connections via drag'n'drop.").arg("#106CD6"));
+            "<a style='color: %1' href='clone'>clone</a>, "
+            "<a style='color: %1' href='import'>import</a> or "
+            "<a style='color: %1' href='export'>export</a> connections. "
+            "Reorder them, or move them into a namespace, via drag'n'drop.").arg("#106CD6"));
         intro->setWordWrap(true);
 
         VERIFY(connect(intro, SIGNAL(linkActivated(QString)), this, SLOT(linkActivated(QString))));
@@ -211,16 +283,8 @@ namespace Robomongo
         QHBoxLayout *mainLayout = new QHBoxLayout(this);
         mainLayout->addLayout(firstColumnLayout, 1);
 
-        // Populate list with connections
-        std::vector<ConnectionSettings*> connectionSettings = _settingsManager->connections();
-        for (auto const& connSetting : connectionSettings) {
-            ConnectionSettings *connectionModel { connSetting };
-            add(connectionModel);
-        }
-
-        // Highlight last item
-        if (_listWidget->topLevelItemCount() > 0)
-            _listWidget->setCurrentItem(_listWidget->topLevelItem(_listWidget->topLevelItemCount()-1));
+        // Populate list with connections and highlight the last one
+        populate(nullptr);
 
         _listWidget->setFocus();
         resize(getSetting("ConnectionsDialog/size").toSize());
@@ -250,6 +314,7 @@ namespace Robomongo
     ConnectionsDialog::~ConnectionsDialog() 
     {
         saveSetting("ConnectionsDialog/size", size());
+        saveSetting("ConnectionsDialog/collapsedNamespaces", QStringList(_collapsedNamespaces.values()));
     }
 
     void ConnectionsDialog::linkActivated(const QString &link)
@@ -262,6 +327,10 @@ namespace Robomongo
             remove();
         else if (link == "clone")
             clone();
+        else if (link == "import")
+            importConnections();
+        else if (link == "export")
+            exportConnections();
     }
 
     /**
@@ -270,6 +339,8 @@ namespace Robomongo
     void ConnectionsDialog::add()
     {       
         auto newConnSettings = std::unique_ptr<ConnectionSettings>(new ConnectionSettings(false));
+        // Start in the namespace that is selected in the list
+        newConnSettings->setConnectionNamespace(QtUtils::toStdString(currentNamespace()));
         ConnectionDialog editDialog(newConnSettings.get(), this);
 
         // Do nothing if not accepted
@@ -277,8 +348,9 @@ namespace Robomongo
             return;
         }
 
-        add(newConnSettings.get());
-        _settingsManager->addConnection(newConnSettings.release());
+        auto const connection = newConnSettings.release();
+        _settingsManager->addConnection(connection);
+        populate(connection);
         
         _listWidget->setFocus();
     }
@@ -310,15 +382,8 @@ namespace Robomongo
         // on linux focus is lost - we need to activate connections dialog
         activateWindow();
 
-        int size = _connectionItems.size();
-        for (int i = 0; i<size; ++i)
-        {
-            ConnectionListWidgetItem *item = _connectionItems[i];
-            if (_connectionItems[i]->connection() == connection) {
-                item->setConnection(connection);
-                break;
-            }
-        }        
+        // Rebuild, since the namespace may have changed
+        populate(connection);
     }
 
     /**
@@ -353,9 +418,9 @@ namespace Robomongo
         }
         */
 
+        // Deletes connSettings
         _settingsManager->removeConnection(connSettings);
-
-        delete currentItem;
+        populate(nullptr);
     }
 
     void ConnectionsDialog::clone()
@@ -385,7 +450,7 @@ namespace Robomongo
 
         // Now connection will be owned by SettingsManager
         _settingsManager->addConnection(connection);
-        add(connection);
+        populate(connection);
     }
 
     /**
@@ -393,39 +458,257 @@ namespace Robomongo
      */
     void ConnectionsDialog::listWidget_layoutChanged()
     {
-        // Make childrens toplevel again. This is a bad, but quickiest item reordering
-        // implementation.
-        for (int i = 0; i < _listWidget->topLevelItemCount(); i++)
-        {
-            auto item = (ConnectionListWidgetItem *) _listWidget->topLevelItem(i);
-            if (item->childCount() > 0) {
-                auto childItem = (ConnectionListWidgetItem *) item->child(0);
-                item->removeChild(childItem);
-                _listWidget->insertTopLevelItem(++i, childItem);
-                _listWidget->setCurrentItem(childItem);
-                break;
+        ConnectionSettings *current = nullptr;
+        if (auto currentItem = dynamic_cast<ConnectionListWidgetItem*>(_listWidget->currentItem()))
+            current = currentItem->connection();
+
+        // Read the new order and grouping from the tree: a connection inside a namespace group
+        // takes that namespace, a top level connection has none
+        SettingsManager::ConnectionSettingsContainerType items;
+        auto const collect = [&items](QTreeWidgetItem *item, QString const& ns) {
+            if (auto connectionItem = dynamic_cast<ConnectionListWidgetItem*>(item)) {
+                connectionItem->connection()->setConnectionNamespace(QtUtils::toStdString(ns));
+                items.push_back(connectionItem->connection());
+            }
+        };
+
+        for (int i = 0; i < _listWidget->topLevelItemCount(); i++) {
+            auto item = _listWidget->topLevelItem(i);
+            if (auto group = dynamic_cast<ConnectionGroupWidgetItem*>(item)) {
+                for (int j = 0; j < group->childCount(); j++)
+                    collect(group->child(j), group->name());
+            }
+            else {
+                collect(item, QString());
             }
         }
 
-        SettingsManager::ConnectionSettingsContainerType items;
-        for (int i = 0; i < _listWidget->topLevelItemCount(); i++)
-        {
-            auto item = (ConnectionListWidgetItem *) _listWidget->topLevelItem(i);
-            items.push_back(item->connection());
-        }
-
         _settingsManager->reorderConnections(items);
+
+        // Rebuild, so groups stay sorted, counts are right and empty groups disappear
+        populate(current);
     }
 
-    /**
-     * @brief Add connection to the list widget
-     */
-    void ConnectionsDialog::add(ConnectionSettings *connection)
+    void ConnectionsDialog::listWidget_itemExpanded(QTreeWidgetItem *item)
     {
-        auto item = new ConnectionListWidgetItem(connection);
-        _listWidget->addTopLevelItem(item);
-        _listWidget->setCurrentItem(item);
-        _connectionItems.push_back(item);
+        if (auto group = dynamic_cast<ConnectionGroupWidgetItem*>(item))
+            _collapsedNamespaces.remove(group->name());
+    }
+
+    void ConnectionsDialog::listWidget_itemCollapsed(QTreeWidgetItem *item)
+    {
+        if (auto group = dynamic_cast<ConnectionGroupWidgetItem*>(item))
+            _collapsedNamespaces.insert(group->name());
+    }
+
+    void ConnectionsDialog::populate(ConnectionSettings *selected)
+    {
+        _listWidget->clear();
+        _connectionItems.clear();
+
+        QHash<QString, ConnectionGroupWidgetItem*> groups;
+        for (auto const& ns : _settingsManager->connectionNamespaces()) {
+            auto group = new ConnectionGroupWidgetItem(ns);
+            _listWidget->addTopLevelItem(group);
+            group->setFirstColumnSpanned(true);
+            groups.insert(ns, group);
+        }
+
+        ConnectionListWidgetItem *selectedItem = nullptr;
+        for (auto const connection : _settingsManager->connections()) {
+            auto item = new ConnectionListWidgetItem(connection);
+            auto const ns = QtUtils::toQString(connection->connectionNamespace());
+            if (ns.isEmpty())
+                _listWidget->addTopLevelItem(item);
+            else
+                groups.value(ns)->addChild(item);
+
+            _connectionItems.push_back(item);
+            if (connection == selected)
+                selectedItem = item;
+        }
+
+        for (auto const group : groups) {
+            group->updateText();
+            group->setExpanded(!_collapsedNamespaces.contains(group->name()));
+        }
+
+        if (!selectedItem && !_connectionItems.empty())
+            selectedItem = _connectionItems.back();
+
+        if (selectedItem) {
+            if (selectedItem->parent())
+                selectedItem->parent()->setExpanded(true);
+            _listWidget->setCurrentItem(selectedItem);
+        }
+    }
+
+    QString ConnectionsDialog::currentNamespace() const
+    {
+        auto const item = _listWidget->currentItem();
+        if (auto group = dynamic_cast<ConnectionGroupWidgetItem*>(item))
+            return group->name();
+
+        if (auto connectionItem = dynamic_cast<ConnectionListWidgetItem*>(item))
+            return QtUtils::toQString(connectionItem->connection()->connectionNamespace());
+
+        return QString();
+    }
+
+    void ConnectionsDialog::moveToNamespace()
+    {
+        auto currentItem = dynamic_cast<ConnectionListWidgetItem*>(_listWidget->currentItem());
+
+        // Do nothing if no connection selected
+        if (!currentItem)
+            return;
+
+        auto connection = currentItem->connection();
+        QStringList namespaces = _settingsManager->connectionNamespaces();
+        namespaces.prepend("");     // No namespace
+        int const current = namespaces.indexOf(QtUtils::toQString(connection->connectionNamespace()));
+
+        bool ok = false;
+        QString const ns = QInputDialog::getItem(this, "Move to Namespace",
+            QString("Namespace for \"%1\".\nPick one, type a new one, or leave empty for none:")
+                .arg(QtUtils::toQString(connection->getReadableName())),
+            namespaces, std::max(current, 0), true, &ok).trimmed();
+
+        if (!ok)
+            return;
+
+        connection->setConnectionNamespace(QtUtils::toStdString(ns));
+        populate(connection);
+    }
+
+    void ConnectionsDialog::exportConnections()
+    {
+        auto const connections = _settingsManager->connections();
+        if (connections.empty()) {
+            QMessageBox::information(this, "Export Connections", "There are no connections to export.");
+            return;
+        }
+
+        QString const defaultPath = QString("%1/robo3t-connections-%2.json")
+            .arg(QDir::homePath()).arg(QDate::currentDate().toString("yyyyMMdd"));
+        QString const path = QFileDialog::getSaveFileName(this, "Export Connections", defaultPath,
+                                                          "Robo 3T connections (*.json)");
+        if (path.isEmpty())
+            return;
+
+        // Passwords go into the file only when encrypted with a passphrase chosen here
+        bool ok = false;
+        QString const passphrase = QInputDialog::getText(this, "Export Connections",
+            "Passphrase to encrypt saved passwords in the file.\n"
+            "Leave empty to export without passwords.",
+            QLineEdit::Password, QString(), &ok);
+        if (!ok)
+            return;
+
+        if (!passphrase.isEmpty()) {
+            if (passphrase.size() < ConnectionsBackup::MinPassphraseLength) {
+                QMessageBox::critical(this, "Export Connections",
+                    QString("The passphrase must have at least %1 characters.")
+                        .arg(ConnectionsBackup::MinPassphraseLength));
+                return;
+            }
+
+            QString const confirmation = QInputDialog::getText(this, "Export Connections",
+                "Enter the passphrase again:", QLineEdit::Password, QString(), &ok);
+            if (!ok)
+                return;
+
+            if (confirmation != passphrase) {
+                QMessageBox::critical(this, "Export Connections", "The passphrases do not match.");
+                return;
+            }
+        }
+
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        QByteArray const data = ConnectionsBackup::exportConnections(connections, passphrase);
+        QApplication::restoreOverrideCursor();
+
+        QSaveFile file(path);
+        bool const written = !data.isEmpty() && file.open(QIODevice::WriteOnly) &&
+                             file.write(data) == data.size() && file.commit();
+        if (!written) {
+            QMessageBox::critical(this, "Export Connections", QString("Could not write %1").arg(path));
+            return;
+        }
+
+        // Even without passwords the file names hosts and users, so keep it private
+        QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+
+        QMessageBox::information(this, "Export Connections",
+            QString("Exported %1 connection(s) to\n%2\n\n%3")
+                .arg(connections.size()).arg(path)
+                .arg(passphrase.isEmpty() ? "Passwords were not included."
+                                          : "Passwords are encrypted with your passphrase. "
+                                            "You need it to import them."));
+    }
+
+    void ConnectionsDialog::importConnections()
+    {
+        QString const path = QFileDialog::getOpenFileName(this, "Import Connections", QDir::homePath(),
+                                                          "Robo 3T connections (*.json)");
+        if (path.isEmpty())
+            return;
+
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            QMessageBox::critical(this, "Import Connections", QString("Could not read %1").arg(path));
+            return;
+        }
+        QByteArray const data = file.readAll();
+
+        bool const fileHasSecrets = ConnectionsBackup::hasSecrets(data);
+        QString passphrase;
+        if (fileHasSecrets) {
+            bool ok = false;
+            passphrase = QInputDialog::getText(this, "Import Connections",
+                "This file contains encrypted passwords. Enter its passphrase,\n"
+                "or leave empty to import the connections without passwords.",
+                QLineEdit::Password, QString(), &ok);
+            if (!ok)
+                return;
+        }
+
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        auto result = ConnectionsBackup::importConnections(data, passphrase);
+        QApplication::restoreOverrideCursor();
+
+        if (!result.error.isEmpty()) {
+            QMessageBox::critical(this, "Import Connections", result.error);
+            return;
+        }
+
+        // Never overwrite: a connection that is already in the list (same UUID) is skipped
+        QSet<QString> existing;
+        for (auto const connection : _settingsManager->connections())
+            existing.insert(connection->uuid());
+
+        int imported = 0, skipped = 0;
+        ConnectionSettings *last = nullptr;
+        for (auto& connection : result.connections) {
+            if (existing.contains(connection->uuid())) {
+                ++skipped;
+                continue;
+            }
+            existing.insert(connection->uuid());
+            last = connection.release();
+            _settingsManager->addConnection(last);
+            ++imported;
+        }
+
+        _settingsManager->save();
+        populate(last);
+
+        QString message = QString("Imported %1 connection(s).").arg(imported);
+        if (skipped > 0)
+            message += QString("\nSkipped %1 that are already in your list.").arg(skipped);
+        if (imported > 0 && fileHasSecrets && !result.secretsRestored)
+            message += "\nPasswords were not imported.";
+        QMessageBox::information(this, "Import Connections", message);
     }
 
     void ConnectionsDialog::keyPressEvent(QKeyEvent *event) {

@@ -15,8 +15,10 @@
 #include <QApplication>
 #include <QDesktopWidget>
 
+#include "robomongo/core/AppRegistry.h"
 #include "robomongo/core/utils/QtUtils.h"
 #include "robomongo/core/settings/ConnectionSettings.h"
+#include "robomongo/core/settings/SettingsManager.h"
 #include "robomongo/core/settings/ReplicaSetSettings.h"
 #include "robomongo/gui/dialogs/ConnectionDialog.h"
 #include "robomongo/gui/GuiRegistry.h"
@@ -42,6 +44,16 @@ namespace Robomongo
         _connectionName = new QLineEdit(QtUtils::toQString(_settings->connectionName()));
         _connInfoLabel = new QLabel("Choose any connection name that will help you to identify this connection.");
         _connInfoLabel->setWordWrap(true);
+
+        // Editable: pick an existing namespace or type a new one
+        _namespaceLabel = new QLabel("Namespace:");
+        _namespace = new QComboBox;
+        _namespace->setEditable(true);
+        _namespace->setInsertPolicy(QComboBox::NoInsert);
+        _namespace->addItem("");
+        _namespace->addItems(AppRegistry::instance().settingsManager()->connectionNamespaces());
+        _namespace->setCurrentText(QtUtils::toQString(_settings->connectionNamespace()));
+        _namespace->lineEdit()->setPlaceholderText("Optional, groups connections in the connections list");
 
         _addressLabel = new QLabel("Address:");
         _serverAddress = new QLineEdit(QtUtils::toQString(_settings->serverHost()));
@@ -130,6 +142,8 @@ namespace Robomongo
         connLayout->addWidget(_connectionType,                1, 1, 1, 3);
         connLayout->addWidget(_nameLabel,                     3, 0);
         connLayout->addWidget(_connectionName,                3, 1, 1, 3);
+        connLayout->addWidget(_namespaceLabel,                4, 0);
+        connLayout->addWidget(_namespace,                     4, 1, 1, 3);
         connLayout->addWidget(_addressLabel,                  5, 0);
         connLayout->addWidget(_serverAddress,                 5, 1);
         connLayout->addWidget(_colon,                         5, 2);
@@ -165,6 +179,7 @@ namespace Robomongo
     {
         _settings->setReplicaSet(static_cast<bool>(_connectionType->currentIndex()));
         _settings->setConnectionName(QtUtils::toStdString(_connectionName->text()));
+        _settings->setConnectionNamespace(QtUtils::toStdString(_namespace->currentText().trimmed()));
 
         if (_settings->isReplicaSet() && _members->topLevelItemCount() == 0) {
             QMessageBox::critical(this, "Error", "Replica set members cannot be empty. "  
@@ -394,5 +409,6 @@ namespace Robomongo
         }
         // Advanced Tab
         _connectionDialog->setDefaultDb(QString::fromStdString(mongoUri.getDatabase()));
+        _connectionDialog->setAppName(QString::fromStdString(mongoUri.getAppName().get_value_or("")));
     }
 }

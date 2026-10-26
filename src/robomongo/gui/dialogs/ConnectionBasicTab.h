@@ -39,6 +39,8 @@ namespace Robomongo
         QComboBox *_connectionType;
         QLabel *_nameLabel;
         QLineEdit *_connectionName;
+        QLabel *_namespaceLabel;
+        QComboBox *_namespace;
         QLabel *_connInfoLabel;
         QLabel *_addressLabel;
         QLineEdit *_serverAddress;

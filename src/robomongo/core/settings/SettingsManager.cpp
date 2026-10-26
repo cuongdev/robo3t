@@ -1,5 +1,7 @@
 #include "robomongo/core/settings/SettingsManager.h"
 
+#include <algorithm>
+
 #include <QDir>
 #include <QFile>
 #include <QVariantList>
@@ -75,6 +77,7 @@ namespace Robomongo
     //            be defined and placed into the vector initializer list below in order.
     std::vector<QString> const SettingsManager::_configFilesOfOldVersions
     {
+        QString("%1/.3T/robo-3t/1.4.4/robo3t.json").arg(QDir::homePath()), // CONFIG_FILE_1_4_4
         QString("%1/.3T/robo-3t/1.4.3/robo3t.json").arg(QDir::homePath()), // CONFIG_FILE_1_4_3
         QString("%1/.3T/robo-3t/1.4.2/robo3t.json").arg(QDir::homePath()), // CONFIG_FILE_1_4_2
         QString("%1/.3T/robo-3t/1.4.1/robo3t.json").arg(QDir::homePath()), // CONFIG_FILE_1_4_1
@@ -112,6 +115,7 @@ namespace Robomongo
         _textFontPointSize(-1),
         _mongoTimeoutSec(10),
         _shellTimeoutSec(15),
+        _defaultAppName("application"),
         _imported(false)        
     {
         if (!QDir().mkpath(ConfigDir))
@@ -283,6 +287,11 @@ namespace Robomongo
             _shellTimeoutSec = map.value("shellTimeoutSec").toInt();
         }
 
+        // Missing in configs saved before this setting existed: keep the default
+        if (map.contains("defaultAppName")) {
+            _defaultAppName = QtUtils::toStdString(map.value("defaultAppName").toString());
+        }
+
         // 5. Load connections
         _connections.clear();
 
@@ -369,6 +378,7 @@ namespace Robomongo
         map.insert("checkForUpdates", _checkForUpdates);
         map.insert("mongoTimeoutSec", _mongoTimeoutSec);
         map.insert("shellTimeoutSec", _shellTimeoutSec);
+        map.insert("defaultAppName", QtUtils::toQString(_defaultAppName));
 
         // 10. Save style
         map.insert("style", _currentStyle);
@@ -519,6 +529,21 @@ namespace Robomongo
     void SettingsManager::reorderConnections(const ConnectionSettingsContainerType &connections)
     {
         _connections = connections;
+    }
+
+    QStringList SettingsManager::connectionNamespaces() const
+    {
+        QStringList namespaces;
+        for (auto const& connection : _connections) {
+            auto const ns = QtUtils::toQString(connection->connectionNamespace());
+            if (!ns.isEmpty() && !namespaces.contains(ns))
+                namespaces.append(ns);
+        }
+
+        std::sort(namespaces.begin(), namespaces.end(), [](QString const& a, QString const& b) {
+            return a.compare(b, Qt::CaseInsensitive) < 0;
+        });
+        return namespaces;
     }
 
     void SettingsManager::setToolbarSettings(const QString toolbarName, const bool visible)
@@ -675,7 +700,9 @@ namespace Robomongo
         _lineNumbers     = vmap.value("lineNumbers").toBool();
         _debugMode       = vmap.value("debugMode").toBool();
         _shellTimeoutSec = vmap.value("shellTimeoutSec").toInt();
-        
+        if (vmap.contains("defaultAppName"))
+            _defaultAppName = QtUtils::toStdString(vmap.value("defaultAppName").toString());
+
         //// Import connections
         for (auto const& vcon : vmap.value("connections").toList()) {
             QVariantMap const& vconn = vcon.toMap();

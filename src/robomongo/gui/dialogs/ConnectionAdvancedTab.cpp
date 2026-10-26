@@ -3,6 +3,7 @@
 #include <QLabel>
 #include <QGridLayout>
 #include <QLineEdit>
+#include <QMessageBox>
 /* --- Disabling unfinished export URI connection string feature 
 #include <QPushButton>
 #include <QMessageBox>
@@ -69,11 +70,24 @@ namespace Robomongo
         defaultDbLabel->setMaximumWidth(140); // Linux
 #endif
 
+        auto appNameDescriptionLabel = new QLabel(
+            "Name this connection reports to the server. It appears in server logs and in "
+            "<code>db.currentOp()</code>, so you can tell who is connecting. "
+            "Leave this field empty to use the default from <i>Options, Default App Name</i>.");
+        appNameDescriptionLabel->setWordWrap(true);
+        appNameDescriptionLabel->setContentsMargins(0, -2, 0, 20);
+        _appName = new QLineEdit(QtUtils::toQString(_settings->appName()));
+        _appName->setMaxLength(ConnectionSettings::MaxAppNameBytes);
+        auto appNameLabel = new QLabel("App Name:");
+
         auto mainLayout = new QGridLayout;
         mainLayout->setAlignment(Qt::AlignTop);
         mainLayout->addWidget(defaultDbLabel,                           1, 0);
         mainLayout->addWidget(_defaultDatabaseName,                     1, 1, 1, 2);
         mainLayout->addWidget(defaultDatabaseDescriptionLabel,          2, 1, 1, 2);
+        mainLayout->addWidget(appNameLabel,                             3, 0);
+        mainLayout->addWidget(_appName,                                 3, 1, 1, 2);
+        mainLayout->addWidget(appNameDescriptionLabel,                  4, 1, 1, 2);
         /* --- Disabling unfinished export URI connection string feature
         mainLayout->addWidget(new QLabel{ "URI Connection String:" },   3, 0);
         mainLayout->addWidget(_uriString,                               3, 1);
@@ -82,14 +96,29 @@ namespace Robomongo
         setLayout(mainLayout);
     }
 
-    void ConnectionAdvancedTab::accept()
+    bool ConnectionAdvancedTab::accept()
     {
+        // Max length above counts characters, but the server limit is in UTF-8 bytes
+        QString const appName = _appName->text().trimmed();
+        if (appName.toUtf8().size() > ConnectionSettings::MaxAppNameBytes) {
+            QMessageBox::critical(this, "Error", QString("App Name cannot be longer than %1 bytes.")
+                                                 .arg(ConnectionSettings::MaxAppNameBytes));
+            return false;
+        }
+
         _settings->setDefaultDatabase(QtUtils::toStdString(_defaultDatabaseName->text()));
+        _settings->setAppName(QtUtils::toStdString(appName));
+        return true;
     }
 
     void ConnectionAdvancedTab::setDefaultDb(const QString& defaultDb)
     {
         _defaultDatabaseName->setText(defaultDb);
+    }
+
+    void ConnectionAdvancedTab::setAppName(const QString& appName)
+    {
+        _appName->setText(appName);
     }
 
     /* --- Disabling unfinished export URI connection string feature

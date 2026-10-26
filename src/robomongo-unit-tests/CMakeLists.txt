@@ -23,6 +23,8 @@ set(SOURCES_TEST
     ${ROBO_SRC_DIR}/utils/RoboCrypt_test.cpp
     ${ROBO_SRC_DIR}/utils/StringOperations_test.cpp
     ${ROBO_SRC_DIR}/core/HexUtils_test.cpp
+    ${ROBO_SRC_DIR}/core/settings/ConnectionSettings_test.cpp
+    ${ROBO_SRC_DIR}/core/settings/ConnectionsBackup_test.cpp
 )
 
 ### --- Setup robo_unit_tests exec. & link ROBO_OBJ_FILES

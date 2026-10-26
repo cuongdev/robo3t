@@ -17,7 +17,8 @@ namespace Robomongo
         Q_OBJECT
 
     public:
-        ScriptEngine(ConnectionSettings *connection, int timeoutSec);
+        // appName: reported by the shell's connection, empty for the shell's own default
+        ScriptEngine(ConnectionSettings *connection, int timeoutSec, std::string const& appName);
         ~ScriptEngine();
 
         void init(bool isLoadMongoJs, const std::string& serverAddr = "", const std::string& dbName = "");
@@ -38,6 +39,7 @@ namespace Robomongo
 
     private:
         ConnectionSettings *_connection;
+        std::string const _appName;
 
         MongoShellResult prepareResult(const std::string &type, const std::string &output, 
                                        const std::vector<MongoDocumentPtr> &objects, qint64 elapsedms,

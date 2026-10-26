@@ -113,6 +113,11 @@ namespace Robomongo
         _advancedTab->setDefaultDb(defaultDb);
     }
 
+    void ConnectionDialog::setAppName(QString const& appName)
+    {
+        _advancedTab->setAppName(appName);
+    }
+
     void ConnectionDialog::toggleSshSupport(bool isReplicaSet)
     {
         if (!_sshTab) 
@@ -157,9 +162,8 @@ namespace Robomongo
     bool ConnectionDialog::validateAndApply()
     {
         _authTab->accept();
-        _advancedTab->accept();
 
-        if (!_basicTab->accept() || !_sshTab->accept() || !_sslTab->accept())
+        if (!_basicTab->accept() || !_sshTab->accept() || !_sslTab->accept() || !_advancedTab->accept())
             return false;
 
         return true;

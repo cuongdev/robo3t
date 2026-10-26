@@ -7,6 +7,7 @@
 #include <QTextStream>
 #include <QFile>
 #include <QElapsedTimer>
+#include <QUrl>
 
 // v0.9
 //#include <third_party/js-1.7/jsapi.h>
@@ -57,8 +58,9 @@ namespace mongo {
 
 namespace Robomongo
 {
-    ScriptEngine::ScriptEngine(ConnectionSettings *connection, int timeoutSec) :
+    ScriptEngine::ScriptEngine(ConnectionSettings *connection, int timeoutSec, std::string const& appName) :
         _connection(connection),
+        _appName(appName),
         _scope(nullptr),
         _engine(NULL),
         _timeoutSec(timeoutSec),
@@ -81,6 +83,10 @@ namespace Robomongo
         std::stringstream ss;
         auto hostAndPort = serverAddr.empty() ? _connection->hostAndPort().toString() : serverAddr;
         ss << "db = connect('" << hostAndPort << "/" << connectDatabase;
+
+        // Percent encoded, so the name is safe inside both the URI and the JS string literal
+        if (!_appName.empty())
+            ss << "?appName=" << QUrl::toPercentEncoding(QString::fromStdString(_appName)).toStdString();
 
 //        v0.9
 //        ss << "db = connect('" << _connection->serverHost() << ":" << _connection->serverPort() << _connection->sslInfo() << _connection->sshInfo() << "/" << connectDatabase;

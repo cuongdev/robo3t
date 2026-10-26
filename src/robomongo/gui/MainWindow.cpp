@@ -23,8 +23,14 @@
 #include <QNetworkReply>
 #include <QUrl>
 #include <QTextDocument>
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QHash>
+
+#include <algorithm>
 
 #include <mongo/logger/log_severity.h>
+#include "robomongo/core/settings/ConnectionSettings.h"
 #include "robomongo/core/settings/SettingsManager.h"
 #include "robomongo/core/settings/SshSettings.h"
 #include "robomongo/core/domain/MongoServer.h"
@@ -455,6 +461,10 @@ namespace Robomongo
         VERIFY(connect(changeShellTimeout, SIGNAL(triggered()), this, SLOT(openShellTimeoutDialog())));
         optionsMenu->addAction(changeShellTimeout);
 
+        auto changeDefaultAppName = new QAction(tr("Default App Name..."), this);
+        VERIFY(connect(changeDefaultAppName, SIGNAL(triggered()), this, SLOT(openDefaultAppNameDialog())));
+        optionsMenu->addAction(changeDefaultAppName);
+
         QAction *preferencesAction = new QAction("Preferences", this);
         VERIFY(connect(preferencesAction, SIGNAL(triggered()), this, SLOT(openPreferences())));
         preferencesAction->setVisible(false);
@@ -800,20 +810,40 @@ namespace Robomongo
 
     void MainWindow::updateConnectionsMenu()
     {
+        // Namespace submenus are children of the menu, but clear() only deletes actions
+        for (auto submenu : _connectionsMenu->findChildren<QMenu*>(QString(), Qt::FindDirectChildrenOnly))
+            submenu->deleteLater();
+
         _connectionsMenu->clear();
         int number = 1;
-        // Populate list with connections
-        SettingsManager::ConnectionSettingsContainerType connections = AppRegistry::instance().settingsManager()->connections();
+
+        // Same layout as the connections dialog: one submenu per namespace (sorted),
+        // then connections without a namespace
+        auto const settingsManager = AppRegistry::instance().settingsManager();
+        QStringList const namespaces = settingsManager->connectionNamespaces();
+        QHash<QString, QMenu*> namespaceMenus;
+        for (auto const& ns : namespaces)
+            namespaceMenus.insert(ns, _connectionsMenu->addMenu(GuiRegistry::instance().folderIcon(), ns));
+
+        // Populate list with connections, ordered as displayed so Alt+N shortcuts follow the menu
+        SettingsManager::ConnectionSettingsContainerType connections = settingsManager->connections();
+        auto const displayRank = [&namespaces](ConnectionSettings *connection) {
+            auto const ns = QtUtils::toQString(connection->connectionNamespace());
+            return ns.isEmpty() ? namespaces.size() : namespaces.indexOf(ns);
+        };
+        std::stable_sort(connections.begin(), connections.end(),
+            [&displayRank](ConnectionSettings *a, ConnectionSettings *b) { return displayRank(a) < displayRank(b); });
         for (SettingsManager::ConnectionSettingsContainerType::const_iterator it = connections.begin(); it != connections.end(); ++it) {
             ConnectionSettings *connection = *it;
             QAction *action = new QAction(QtUtils::toQString(connection->getReadableName()), this);
             action->setData(QVariant::fromValue(connection));
 
-            if (number <= 9 && !AppRegistry::instance().settingsManager()->disableConnectionShortcuts()) {
+            if (number <= 9 && !settingsManager->disableConnectionShortcuts()) {
                 action->setShortcut(QKeySequence(QString("Alt+").append(QString::number(number))));
             }
 
-            _connectionsMenu->addAction(action);
+            auto const ns = QtUtils::toQString(connection->connectionNamespace());
+            (ns.isEmpty() ? _connectionsMenu : namespaceMenus.value(ns))->addAction(action);
             ++number;
         }
 
@@ -963,6 +993,29 @@ namespace Robomongo
     void MainWindow::openShellTimeoutDialog()
     {
         changeShellTimeoutDialog();
+    }
+
+    void MainWindow::openDefaultAppNameDialog()
+    {
+        auto settings = AppRegistry::instance().settingsManager();
+        bool ok = false;
+        QString const appName = QInputDialog::getText(this, "Default App Name",
+            "Name reported to MongoDB servers (server logs, db.currentOp()) by connections\n"
+            "that do not set their own App Name. Applies to connections opened from now on.\n"
+            "Leave empty to use the built-in names.",
+            QLineEdit::Normal, QtUtils::toQString(settings->defaultAppName()), &ok).trimmed();
+
+        if (!ok)
+            return;
+
+        if (appName.toUtf8().size() > ConnectionSettings::MaxAppNameBytes) {
+            QMessageBox::critical(this, "Error", QString("App Name cannot be longer than %1 bytes.")
+                                                 .arg(ConnectionSettings::MaxAppNameBytes));
+            return;
+        }
+
+        settings->setDefaultAppName(QtUtils::toStdString(appName));
+        settings->save();
     }
 
     void MainWindow::toggleLineNumbers()
@@ -1118,6 +1171,11 @@ namespace Robomongo
     {
         QVariant data = connectionAction->data();
         ConnectionSettings *ptr = data.value<ConnectionSettings *>();
+
+        // Actions without a connection, like "Manage Connections..."
+        if (!ptr)
+            return;
+
         try {
             _app->openServer(ptr, ConnectionPrimary);
         }
