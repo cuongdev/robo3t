@@ -50,14 +50,38 @@ sign() {
   codesign --force --options runtime --timestamp --sign "$ROBO_SIGN_IDENTITY" "$@"
 }
 
+# Runs a command up to $1 times. Network calls to Apple and hdiutil fail now and then on CI
+# runners ("The network connection was lost", "Resource busy").
+retry() {
+  local attempts="$1"
+  shift
+  local attempt
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      echo "${*:1:2} failed (attempt $attempt of $attempts), retrying in 20 seconds" >&2
+      sleep 20
+    fi
+  done
+  echo "${*:1:2} failed $attempts times" >&2
+  return 1
+}
+
+LAST_JSON_FIELD='import json, sys
+lines = [l for l in sys.stdin.read().splitlines() if l.strip().startswith("{")]
+print(json.loads(lines[-1])[sys.argv[1]] if lines else "")'
+
 notarize() {
   local file="$1"
   echo "Notarizing $(basename "$file") (usually a few minutes)"
   local result
-  result=$(xcrun notarytool submit "$file" "${NOTARY_AUTH[@]}" --wait --output-format json)
+  result=$(retry 3 xcrun notarytool submit "$file" "${NOTARY_AUTH[@]}" --wait --output-format json)
   local status id
-  status=$(/usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])' <<< "$result")
-  id=$(/usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])' <<< "$result")
+  # The last JSON line is the final answer, even if a retried attempt printed something first
+  status=$(/usr/bin/python3 -c "$LAST_JSON_FIELD" status <<< "$result")
+  id=$(/usr/bin/python3 -c "$LAST_JSON_FIELD" id <<< "$result")
   if [ "$status" != "Accepted" ]; then
     echo "Notarization of $(basename "$file") ended with status: $status" >&2
     xcrun notarytool log "$id" "${NOTARY_AUTH[@]}" >&2 || true
@@ -99,7 +123,7 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 # 2. Notarize and staple the app
 ditto -c -k --keepParent "$APP" "$WORK_DIR/app.zip"
 notarize "$WORK_DIR/app.zip"
-xcrun stapler staple "$APP"
+retry 5 xcrun stapler staple "$APP"
 spctl --assess --type execute --verbose "$APP"
 
 # 3. ZIP of the stapled app
@@ -111,22 +135,11 @@ mkdir -p "$WORK_DIR/dmg-root"
 cp -R "$APP" "$WORK_DIR/dmg-root/"
 ln -s /Applications "$WORK_DIR/dmg-root/Applications"
 rm -f "$OUT_DIR/$NAME.dmg"
-# hdiutil now and then fails with "Resource busy" (seen on CI runners), so retry
-for attempt in 1 2 3 4 5; do
-  if hdiutil create -volname "Robo 3T $VERSION" -srcfolder "$WORK_DIR/dmg-root" -ov -format UDZO \
-       "$OUT_DIR/$NAME.dmg" >/dev/null; then
-    break
-  fi
-  if [ "$attempt" = 5 ]; then
-    echo "hdiutil create failed $attempt times" >&2
-    exit 1
-  fi
-  echo "hdiutil create failed (attempt $attempt), retrying"
-  sleep 15
-done
+retry 5 hdiutil create -volname "Robo 3T $VERSION" -srcfolder "$WORK_DIR/dmg-root" -ov -format UDZO \
+  "$OUT_DIR/$NAME.dmg" >/dev/null
 codesign --force --timestamp --sign "$ROBO_SIGN_IDENTITY" "$OUT_DIR/$NAME.dmg"
 notarize "$OUT_DIR/$NAME.dmg"
-xcrun stapler staple "$OUT_DIR/$NAME.dmg"
+retry 5 xcrun stapler staple "$OUT_DIR/$NAME.dmg"
 spctl --assess --type open --context context:primary-signature --verbose "$OUT_DIR/$NAME.dmg"
 
 cd "$OUT_DIR"
