@@ -259,6 +259,8 @@ Things that differ from the steps above:
    rejects. Pass `/usr/bin/ar` and `/usr/bin/ranlib` explicitly, as shown below.
 3. OpenSSL 1.1.1 is end of life, so this recipe uses OpenSSL 3.5 (LTS).
 4. `bin/configure` loses extra CMake arguments under macOS's bash 3.2, so call CMake directly.
+5. CMake 4 refuses projects that declare a minimum version below 3.5, like the bundled
+   googletest 1.8.1. `CMAKE_POLICY_VERSION_MINIMUM=3.5` lets it configure them anyway.
 
 GitHub Actions runs the same steps in `.github/workflows/release.yml`: a manual run builds the
 app, and pushing a `v<version>` tag also publishes a GitHub release.
@@ -323,6 +325,7 @@ mkdir -p build/release && cd build/release
 cmake -D "CMAKE_PREFIX_PATH=/path/to/Qt/5.15.2/clang_64;/path/to/robomongo-shell;/path/to/openssl-3.5.x" \
       -D CMAKE_BUILD_TYPE=Release -D "CMAKE_INSTALL_PREFIX=$PWD/install" \
       -D CMAKE_OSX_ARCHITECTURES=x86_64 -D CMAKE_AR=/usr/bin/ar -D CMAKE_RANLIB=/usr/bin/ranlib \
+      -D CMAKE_POLICY_VERSION_MINIMUM=3.5 \
       ../..
 cmake --build . -- -j16
 ./src/robomongo-unit-tests/robo_unit_tests

@@ -154,10 +154,12 @@ jobs:
       - name: Build Robo 3T
         run: |
           mkdir -p build/release && cd build/release
+          # CMAKE_POLICY_VERSION_MINIMUM: runners have CMake 4, which refuses projects that
+          # declare a minimum below 3.5, like the bundled googletest 1.8.1
           cmake -D "CMAKE_PREFIX_PATH=$DEPS/Qt/$QT_VERSION/clang_64;$DEPS/robomongo-shell;$DEPS/openssl" \
                 -D CMAKE_BUILD_TYPE=Release -D "CMAKE_INSTALL_PREFIX=$PWD/install" \
                 -D CMAKE_OSX_ARCHITECTURES=x86_64 -D CMAKE_AR=/usr/bin/ar -D CMAKE_RANLIB=/usr/bin/ranlib \
-                -Wno-dev ../..
+                -D CMAKE_POLICY_VERSION_MINIMUM=3.5 -Wno-dev ../..
           cmake --build . -j "$JOBS"
 
       - name: Unit tests
