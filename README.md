@@ -21,12 +21,16 @@ Get the latest build from [Releases](https://github.com/cuongdev/robo3t/releases
 **macOS** (`robo3t-<version>-macos-x86_64.dmg`):
 
 1. Open the `.dmg` and drag **Robo 3T** into Applications.
-2. The app has an ad hoc signature and is not notarized by Apple, so macOS blocks the first launch.
-   Right click the app and choose **Open**, or run:
+2. The app has an ad hoc signature and is not notarized by Apple, so macOS refuses the first launch
+   with *"Apple could not verify "Robo 3T" is free of malware"*. Either run:
 
    ```sh
    xattr -dr com.apple.quarantine "/Applications/Robo 3T.app"
    ```
+
+   or try to open the app once, then go to **System Settings, Privacy & Security** and click
+   **Open Anyway** next to the message about Robo 3T. Since macOS 15, right click and **Open** no
+   longer gets past this check.
 
 3. It is an Intel app. On Apple Silicon it runs through Rosetta, which Apple fully supports
    through macOS 27 (see [Roadmap](#roadmap)).
