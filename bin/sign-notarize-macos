@@ -111,8 +111,19 @@ mkdir -p "$WORK_DIR/dmg-root"
 cp -R "$APP" "$WORK_DIR/dmg-root/"
 ln -s /Applications "$WORK_DIR/dmg-root/Applications"
 rm -f "$OUT_DIR/$NAME.dmg"
-hdiutil create -volname "Robo 3T $VERSION" -srcfolder "$WORK_DIR/dmg-root" -ov -format UDZO \
-  "$OUT_DIR/$NAME.dmg" >/dev/null
+# hdiutil now and then fails with "Resource busy" (seen on CI runners), so retry
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -volname "Robo 3T $VERSION" -srcfolder "$WORK_DIR/dmg-root" -ov -format UDZO \
+       "$OUT_DIR/$NAME.dmg" >/dev/null; then
+    break
+  fi
+  if [ "$attempt" = 5 ]; then
+    echo "hdiutil create failed $attempt times" >&2
+    exit 1
+  fi
+  echo "hdiutil create failed (attempt $attempt), retrying"
+  sleep 15
+done
 codesign --force --timestamp --sign "$ROBO_SIGN_IDENTITY" "$OUT_DIR/$NAME.dmg"
 notarize "$OUT_DIR/$NAME.dmg"
 xcrun stapler staple "$OUT_DIR/$NAME.dmg"
