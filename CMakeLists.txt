@@ -45,7 +45,7 @@ if (SYSTEM_MACOSX)
 endif()
 
 # Projects
-set(LIBSSH2_VERSION 1.9.0)
+set(LIBSSH2_VERSION 1.11.1)
 if(SYSTEM_LINUX)
     set(LIBSSH2_VERSION 1.7.0)
 endif()
