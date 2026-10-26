@@ -21,16 +21,13 @@ Get the latest build from [Releases](https://github.com/cuongdev/robo3t/releases
 **macOS** (`robo3t-<version>-macos-x86_64.dmg`):
 
 1. Open the `.dmg` and drag **Robo 3T** into Applications.
-2. The app has an ad hoc signature and is not notarized by Apple, so macOS refuses the first launch
-   with *"Apple could not verify "Robo 3T" is free of malware"*. Either run:
+2. Releases are signed with a Developer ID and notarized by Apple, so they open normally.
 
-   ```sh
-   xattr -dr com.apple.quarantine "/Applications/Robo 3T.app"
-   ```
-
-   or try to open the app once, then go to **System Settings, Privacy & Security** and click
-   **Open Anyway** next to the message about Robo 3T. Since macOS 15, right click and **Open** no
-   longer gets past this check.
+   Builds taken straight from CI (workflow artifacts) only have an ad hoc signature, and macOS
+   refuses them with *"Apple could not verify "Robo 3T" is free of malware"*. For those, either run
+   `xattr -dr com.apple.quarantine "/Applications/Robo 3T.app"`, or try to open the app once, then
+   click **Open Anyway** in **System Settings, Privacy & Security**. Since macOS 15, right click and
+   **Open** no longer gets past this check.
 
 3. It is an Intel app. On Apple Silicon it runs through Rosetta, which Apple fully supports
    through macOS 27 (see [Roadmap](#roadmap)).
@@ -77,7 +74,8 @@ Known limitations:
 * Some bundled components are end of life upstream: the MongoDB 4.2 shell core and Qt 5.15.2,
   including its QtWebEngine browser engine. Check this against your organization's software
   policies before use.
-* Releases are not notarized by Apple.
+* CI builds are not notarized; releases are signed and notarized by the maintainer afterwards
+  (see [Signing and notarizing](#signing-and-notarizing-macos)).
 
 
 Building from source
@@ -120,6 +118,9 @@ Maintaining
    The **Release** workflow builds the app, runs the unit tests, checks the bundle, and publishes a
    GitHub release with the `.dmg`, `.zip` and `SHA256SUMS.txt`. The tag must match the version in
    `CMakeLists.txt`. Nothing is published if the build fails.
+
+5. Sign and notarize the release files, and replace them on the release (next section). Until
+   then the release has CI's ad hoc signed files.
 
 Run the workflow by hand (Actions, Release, Run workflow) to build without releasing; the files are
 attached to the run as an artifact.
