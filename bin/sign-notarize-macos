@@ -12,6 +12,7 @@
 #                        `security find-identity -v -p codesigning` (or the full name if unique)
 #   ROBO_NOTARY_PROFILE  notarytool keychain profile, created once with
 #                        `xcrun notarytool store-credentials <profile> --apple-id <id> --team-id <team>`
+#   ROBO_NOTARY_KEYCHAIN Keychain that holds the notarytool profile, if not the default one (CI)
 #   ROBO_SKIP_NOTARIZE   Set to 1 to only sign, e.g. to test the signed app first
 #
 # The app is signed in place.
@@ -36,6 +37,11 @@ if [ "$SKIP_NOTARIZE" != "1" ]; then
   : "${ROBO_NOTARY_PROFILE:?Set ROBO_NOTARY_PROFILE to a notarytool keychain profile}"
 fi
 
+NOTARY_AUTH=(--keychain-profile "${ROBO_NOTARY_PROFILE:-}")
+if [ -n "${ROBO_NOTARY_KEYCHAIN:-}" ]; then
+  NOTARY_AUTH+=(--keychain "$ROBO_NOTARY_KEYCHAIN")
+fi
+
 NAME="robo3t-$VERSION-macos-x86_64"
 mkdir -p "$OUT_DIR"
 OUT_DIR=$(cd "$OUT_DIR" && pwd)
@@ -48,14 +54,13 @@ notarize() {
   local file="$1"
   echo "Notarizing $(basename "$file") (usually a few minutes)"
   local result
-  result=$(xcrun notarytool submit "$file" --keychain-profile "$ROBO_NOTARY_PROFILE" --wait \
-             --output-format json)
+  result=$(xcrun notarytool submit "$file" "${NOTARY_AUTH[@]}" --wait --output-format json)
   local status id
   status=$(/usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])' <<< "$result")
   id=$(/usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])' <<< "$result")
   if [ "$status" != "Accepted" ]; then
     echo "Notarization of $(basename "$file") ended with status: $status" >&2
-    xcrun notarytool log "$id" --keychain-profile "$ROBO_NOTARY_PROFILE" >&2 || true
+    xcrun notarytool log "$id" "${NOTARY_AUTH[@]}" >&2 || true
     exit 1
   fi
 }

@@ -98,3 +98,9 @@ Desktop.ini
 $RECYCLE.BIN/
 .vscode/settings.json
 .vs/
+
+# Signing material and signed output (bin/sign-notarize-macos), never commit these
+*.p12
+*.p8
+*.keychain-db
+/signed/

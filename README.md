@@ -23,7 +23,7 @@ Get the latest build from [Releases](https://github.com/cuongdev/robo3t/releases
 1. Open the `.dmg` and drag **Robo 3T** into Applications.
 2. Releases are signed with a Developer ID and notarized by Apple, so they open normally.
 
-   Builds taken straight from CI (workflow artifacts) only have an ad hoc signature, and macOS
+   Builds made without the signing secrets (forks, for example) only have an ad hoc signature, and macOS
    refuses them with *"Apple could not verify "Robo 3T" is free of malware"*. For those, either run
    `xattr -dr com.apple.quarantine "/Applications/Robo 3T.app"`, or try to open the app once, then
    click **Open Anyway** in **System Settings, Privacy & Security**. Since macOS 15, right click and
@@ -74,7 +74,7 @@ Known limitations:
 * Some bundled components are end of life upstream: the MongoDB 4.2 shell core and Qt 5.15.2,
   including its QtWebEngine browser engine. Check this against your organization's software
   policies before use.
-* CI builds are not notarized; releases are signed and notarized by the maintainer afterwards
+* Builds are only notarized where the signing secrets are set up
   (see [Signing and notarizing](#signing-and-notarizing-macos)).
 
 
@@ -119,8 +119,8 @@ Maintaining
    GitHub release with the `.dmg`, `.zip` and `SHA256SUMS.txt`. The tag must match the version in
    `CMakeLists.txt`. Nothing is published if the build fails.
 
-5. Sign and notarize the release files, and replace them on the release (next section). Until
-   then the release has CI's ad hoc signed files.
+   With the signing secrets in place, the release files are signed with a Developer ID and
+   notarized (next section).
 
 Run the workflow by hand (Actions, Release, Run workflow) to build without releasing; the files are
 attached to the run as an artifact.
@@ -130,18 +130,46 @@ with Qt and OpenSSL. Change the `-v1` suffix of a cache key to force a rebuild.
 
 ### Signing and notarizing (macOS)
 
-CI builds have an ad hoc signature only. To publish a build that opens without Gatekeeper
-warnings, sign it with a Developer ID Application certificate and notarize it with
-[bin/sign-notarize-macos](bin/sign-notarize-macos):
+The **Release** workflow signs the app with a Developer ID Application certificate (hardened
+runtime), notarizes it with Apple and staples the tickets, using
+[bin/sign-notarize-macos](bin/sign-notarize-macos). Without the secrets below it publishes an ad
+hoc signed build instead.
 
-1. Once per machine, store notarization credentials in the keychain (use an app-specific
-   password from appleid.apple.com):
+How the secrets are protected:
+
+* They are **environment secrets** of the `release` environment, which only `master` and `v*` tags
+  can use, so a workflow changed on another branch cannot read them.
+* Only the `sign-macos` job gets them. It runs no third party build code: the app is built in a
+  separate job without secrets, and actions are pinned to commit SHAs.
+* The certificate goes into a temporary keychain with a random password, deleted at the end of the
+  job. GitHub masks secret values in logs.
+
+To set them up (once, and again when the certificate or password changes):
+
+1. Export the certificate with its private key: Keychain Access, login keychain,
+   **My Certificates**, right click **Developer ID Application: ...**, **Export**, save as `.p12`
+   outside the repository and choose a strong export password.
+2. Create an app-specific password at appleid.apple.com (Sign-In and Security).
+3. Store everything with the GitHub CLI. Commands without a value ask for it without echoing:
+
+   ```sh
+   base64 -i ~/Desktop/devid.p12 | gh secret set MACOS_CERTIFICATE_P12_BASE64 --env release
+   gh secret set MACOS_CERTIFICATE_PASSWORD --env release   # the .p12 export password
+   gh secret set MACOS_NOTARY_PASSWORD --env release        # the app-specific password
+   gh secret set MACOS_NOTARY_APPLE_ID --env release        # Apple ID email
+   gh secret set MACOS_NOTARY_TEAM_ID --env release         # team ID, e.g. from the certificate name
+   rm ~/Desktop/devid.p12
+   ```
+
+To sign locally instead (for example to re-sign an existing release):
+
+1. Once per machine, store notarization credentials in the keychain:
 
    ```sh
    xcrun notarytool store-credentials robo3t-notary --apple-id <Apple ID> --team-id <Team ID>
    ```
 
-2. Download the release `.zip`, extract it, then sign, notarize and package the app:
+2. Extract the release `.zip`, then sign, notarize and package the app:
 
    ```sh
    ROBO_SIGN_IDENTITY=<SHA1 from: security find-identity -v -p codesigning> \
@@ -149,9 +177,8 @@ warnings, sign it with a Developer ID Application certificate and notarize it wi
    bin/sign-notarize-macos "Robo 3T.app" <version> signed
    ```
 
-   The script signs every component with the hardened runtime, notarizes and staples the app,
-   and writes a signed, notarized and stapled `.dmg`, a `.zip` and `SHA256SUMS.txt` into `signed`.
-   Set `ROBO_SKIP_NOTARIZE=1` to only sign, for testing.
+   This writes a signed, notarized and stapled `.dmg`, a `.zip` and `SHA256SUMS.txt` into `signed`
+   (ignored by git). Set `ROBO_SKIP_NOTARIZE=1` to only sign, for testing.
 
 3. Replace the release files: `gh release upload v<version> signed/* --clobber`.
 
