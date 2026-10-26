@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for QtWebEngineProcess, the Chromium helper of QtWebEngine, when signed with the
+  hardened runtime (bin/sign-notarize-macos). Its V8 JavaScript engine generates code at run time.
+  The main app needs no entitlements: the MongoDB shell's JavaScript engine runs without them.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>

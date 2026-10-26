@@ -127,6 +127,37 @@ attached to the run as an artifact.
 The MongoDB shell build takes about an hour on a GitHub runner, so the workflow caches it, together
 with Qt and OpenSSL. Change the `-v1` suffix of a cache key to force a rebuild.
 
+### Signing and notarizing (macOS)
+
+CI builds have an ad hoc signature only. To publish a build that opens without Gatekeeper
+warnings, sign it with a Developer ID Application certificate and notarize it with
+[bin/sign-notarize-macos](bin/sign-notarize-macos):
+
+1. Once per machine, store notarization credentials in the keychain (use an app-specific
+   password from appleid.apple.com):
+
+   ```sh
+   xcrun notarytool store-credentials robo3t-notary --apple-id <Apple ID> --team-id <Team ID>
+   ```
+
+2. Download the release `.zip`, extract it, then sign, notarize and package the app:
+
+   ```sh
+   ROBO_SIGN_IDENTITY=<SHA1 from: security find-identity -v -p codesigning> \
+   ROBO_NOTARY_PROFILE=robo3t-notary \
+   bin/sign-notarize-macos "Robo 3T.app" <version> signed
+   ```
+
+   The script signs every component with the hardened runtime, notarizes and staples the app,
+   and writes a signed, notarized and stapled `.dmg`, a `.zip` and `SHA256SUMS.txt` into `signed`.
+   Set `ROBO_SKIP_NOTARIZE=1` to only sign, for testing.
+
+3. Replace the release files: `gh release upload v<version> signed/* --clobber`.
+
+Only QtWebEngineProcess, the Chromium helper, gets entitlements (JIT, see
+[install/macosx/QtWebEngineProcess.entitlements](install/macosx/QtWebEngineProcess.entitlements)).
+The app itself needs none.
+
 ### Updating dependencies
 
 * **OpenSSL**: change `OPENSSL_VERSION` and `OPENSSL_SHA256` in the workflow (the SHA256 comes from

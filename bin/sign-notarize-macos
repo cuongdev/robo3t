@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#
+# Signs a built "Robo 3T.app" with a Developer ID certificate (hardened runtime), notarizes it
+# with Apple and staples the ticket, then writes a signed, notarized and stapled DMG, a ZIP and
+# SHA256SUMS.txt into the output folder.
+#
+# Usage:
+#   bin/sign-notarize-macos "<path/to/Robo 3T.app>" <version> <output folder>
+#
+# Environment:
+#   ROBO_SIGN_IDENTITY   Developer ID Application identity: SHA1 hash from
+#                        `security find-identity -v -p codesigning` (or the full name if unique)
+#   ROBO_NOTARY_PROFILE  notarytool keychain profile, created once with
+#                        `xcrun notarytool store-credentials <profile> --apple-id <id> --team-id <team>`
+#   ROBO_SKIP_NOTARIZE   Set to 1 to only sign, e.g. to test the signed app first
+#
+# The app is signed in place.
+
+set -euo pipefail
+
+BIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_DIR=$(dirname "$BIN_DIR")
+HELPER_ENTITLEMENTS="$PROJECT_DIR/install/macosx/QtWebEngineProcess.entitlements"
+
+if [ $# -ne 3 ]; then
+  echo "Usage: $0 \"<path/to/Robo 3T.app>\" <version> <output folder>" >&2
+  exit 2
+fi
+
+APP="$1"
+VERSION="$2"
+OUT_DIR="$3"
+: "${ROBO_SIGN_IDENTITY:?Set ROBO_SIGN_IDENTITY to a Developer ID Application identity}"
+SKIP_NOTARIZE="${ROBO_SKIP_NOTARIZE:-0}"
+if [ "$SKIP_NOTARIZE" != "1" ]; then
+  : "${ROBO_NOTARY_PROFILE:?Set ROBO_NOTARY_PROFILE to a notarytool keychain profile}"
+fi
+
+NAME="robo3t-$VERSION-macos-x86_64"
+mkdir -p "$OUT_DIR"
+OUT_DIR=$(cd "$OUT_DIR" && pwd)
+
+sign() {
+  codesign --force --options runtime --timestamp --sign "$ROBO_SIGN_IDENTITY" "$@"
+}
+
+notarize() {
+  local file="$1"
+  echo "Notarizing $(basename "$file") (usually a few minutes)"
+  local result
+  result=$(xcrun notarytool submit "$file" --keychain-profile "$ROBO_NOTARY_PROFILE" --wait \
+             --output-format json)
+  local status id
+  status=$(/usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])' <<< "$result")
+  id=$(/usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])' <<< "$result")
+  if [ "$status" != "Accepted" ]; then
+    echo "Notarization of $(basename "$file") ended with status: $status" >&2
+    xcrun notarytool log "$id" --keychain-profile "$ROBO_NOTARY_PROFILE" >&2 || true
+    exit 1
+  fi
+}
+
+# 1. Sign from the inside out: every Mach-O file, then the helper app, the frameworks and
+#    finally the app itself. (codesign --deep is not meant for signing.)
+echo "Signing Mach-O files in $APP"
+while IFS= read -r -d '' file; do
+  if file "$file" | grep -q 'Mach-O'; then
+    sign "$file" 2> >(grep -v 'replacing existing signature' >&2)
+  fi
+done < <(find "$APP/Contents" -type f -print0)
+
+while IFS= read -r -d '' helper; do
+  echo "Signing $(basename "$helper") with its entitlements"
+  sign --entitlements "$HELPER_ENTITLEMENTS" "$helper" 2> >(grep -v 'replacing existing signature' >&2)
+done < <(find "$APP/Contents/Frameworks" -type d -name 'QtWebEngineProcess.app' -print0)
+
+while IFS= read -r -d '' framework; do
+  sign "$framework" 2> >(grep -v 'replacing existing signature' >&2)
+done < <(find "$APP/Contents/Frameworks" -maxdepth 1 -type d -name '*.framework' -print0)
+
+echo "Signing the app"
+sign "$APP" 2> >(grep -v 'replacing existing signature' >&2)
+codesign --verify --deep --strict "$APP"
+echo "Signature verified"
+
+if [ "$SKIP_NOTARIZE" = "1" ]; then
+  echo "ROBO_SKIP_NOTARIZE=1: stopping after signing"
+  exit 0
+fi
+
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+# 2. Notarize and staple the app
+ditto -c -k --keepParent "$APP" "$WORK_DIR/app.zip"
+notarize "$WORK_DIR/app.zip"
+xcrun stapler staple "$APP"
+spctl --assess --type execute --verbose "$APP"
+
+# 3. ZIP of the stapled app
+rm -f "$OUT_DIR/$NAME.zip"
+ditto -c -k --keepParent "$APP" "$OUT_DIR/$NAME.zip"
+
+# 4. DMG with the stapled app, signed, notarized and stapled itself
+mkdir -p "$WORK_DIR/dmg-root"
+cp -R "$APP" "$WORK_DIR/dmg-root/"
+ln -s /Applications "$WORK_DIR/dmg-root/Applications"
+rm -f "$OUT_DIR/$NAME.dmg"
+hdiutil create -volname "Robo 3T $VERSION" -srcfolder "$WORK_DIR/dmg-root" -ov -format UDZO \
+  "$OUT_DIR/$NAME.dmg" >/dev/null
+codesign --force --timestamp --sign "$ROBO_SIGN_IDENTITY" "$OUT_DIR/$NAME.dmg"
+notarize "$OUT_DIR/$NAME.dmg"
+xcrun stapler staple "$OUT_DIR/$NAME.dmg"
+spctl --assess --type open --context context:primary-signature --verbose "$OUT_DIR/$NAME.dmg"
+
+cd "$OUT_DIR"
+shasum -a 256 "$NAME.dmg" "$NAME.zip" > SHA256SUMS.txt
+cat SHA256SUMS.txt
+echo "Done: $OUT_DIR"
