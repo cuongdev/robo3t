@@ -8,6 +8,10 @@ name: Release
 # Security: secrets are only given to the sign-macos job, which runs no third party build
 # code, only this repository's bin/sign-notarize-macos and Apple's tools. Actions are pinned
 # to commit SHAs.
+#
+# Runners: macOS jobs use the repository variable MACOS_RUNNER, or macos-15 (Apple Silicon)
+# when it is not set. Set it to macos-15-intel when Apple Silicon runners are short of capacity
+# ("The job was not acquired by Runner"). Both build the same Intel app.
 
 on:
   push:
@@ -37,7 +41,7 @@ env:
 jobs:
   build-macos:
     name: Build macOS app
-    runs-on: macos-15
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-15' }}
     timeout-minutes: 360
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -221,7 +225,7 @@ jobs:
   sign-macos:
     name: Sign and notarize macOS app
     needs: build-macos
-    runs-on: macos-15
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-15' }}
     # The secrets live in this environment, which only master and v* tags can use
     environment: release
     timeout-minutes: 90

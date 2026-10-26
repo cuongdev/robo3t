@@ -128,6 +128,11 @@ attached to the run as an artifact.
 The MongoDB shell build takes about an hour on a GitHub runner, so the workflow caches it, together
 with Qt and OpenSSL. Change the `-v1` suffix of a cache key to force a rebuild.
 
+macOS jobs run on `macos-15` (Apple Silicon) unless the repository variable `MACOS_RUNNER` says
+otherwise. When GitHub is short of Apple Silicon runners, jobs fail with *"The job was not acquired
+by Runner"*; then run `gh variable set MACOS_RUNNER --body macos-15-intel` (Intel runners build
+the same app) and start the workflow again.
+
 ### Signing and notarizing (macOS)
 
 The **Release** workflow signs the app with a Developer ID Application certificate (hardened
