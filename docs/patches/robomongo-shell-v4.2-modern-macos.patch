@@ -1,0 +1,99 @@
+diff --git a/src/third_party/boost-1.70.0/boost/numeric/conversion/int_float_mixture_enum.hpp b/src/third_party/boost-1.70.0/boost/numeric/conversion/int_float_mixture_enum.hpp
+index d0c2daac..b2e3ab73 100644
+--- a/src/third_party/boost-1.70.0/boost/numeric/conversion/int_float_mixture_enum.hpp
++++ b/src/third_party/boost-1.70.0/boost/numeric/conversion/int_float_mixture_enum.hpp
+@@ -12,7 +12,7 @@
+ 
+ namespace boost { namespace numeric
+ {
+-  enum int_float_mixture_enum
++  enum int_float_mixture_enum : int
+   {
+      integral_to_integral
+     ,integral_to_float
+diff --git a/src/third_party/boost-1.70.0/boost/numeric/conversion/sign_mixture_enum.hpp b/src/third_party/boost-1.70.0/boost/numeric/conversion/sign_mixture_enum.hpp
+index 1525f8d3..d4b572ad 100644
+--- a/src/third_party/boost-1.70.0/boost/numeric/conversion/sign_mixture_enum.hpp
++++ b/src/third_party/boost-1.70.0/boost/numeric/conversion/sign_mixture_enum.hpp
+@@ -12,7 +12,7 @@
+ 
+ namespace boost { namespace numeric
+ {
+-  enum sign_mixture_enum
++  enum sign_mixture_enum : int
+   {
+      unsigned_to_unsigned
+     ,signed_to_signed
+diff --git a/src/third_party/boost-1.70.0/boost/numeric/conversion/udt_builtin_mixture_enum.hpp b/src/third_party/boost-1.70.0/boost/numeric/conversion/udt_builtin_mixture_enum.hpp
+index 2540e806..8efd0bcb 100644
+--- a/src/third_party/boost-1.70.0/boost/numeric/conversion/udt_builtin_mixture_enum.hpp
++++ b/src/third_party/boost-1.70.0/boost/numeric/conversion/udt_builtin_mixture_enum.hpp
+@@ -12,7 +12,7 @@
+ 
+ namespace boost { namespace numeric
+ {
+-  enum udt_builtin_mixture_enum
++  enum udt_builtin_mixture_enum : int
+   {
+      builtin_to_builtin
+     ,builtin_to_udt
+diff --git a/src/third_party/mozjs-60/extract/js/src/threading/ExclusiveData.h b/src/third_party/mozjs-60/extract/js/src/threading/ExclusiveData.h
+index 25b977e3..9c903188 100644
+--- a/src/third_party/mozjs-60/extract/js/src/threading/ExclusiveData.h
++++ b/src/third_party/mozjs-60/extract/js/src/threading/ExclusiveData.h
+@@ -121,7 +121,7 @@ class ExclusiveData
+     }
+ 
+     ExclusiveData(ExclusiveData&& rhs)
+-      : lock_(mozilla::Move(rhs.lock))
++      : lock_(mozilla::Move(rhs.lock_))
+     {
+         MOZ_ASSERT(&rhs != this, "self-move disallowed!");
+         new (mozilla::KnownNotNull, value_.addr()) T(mozilla::Move(*rhs.value_.addr()));
+diff --git a/src/third_party/s2/s2polyline.cc b/src/third_party/s2/s2polyline.cc
+index 08769555..3fa04341 100644
+--- a/src/third_party/s2/s2polyline.cc
++++ b/src/third_party/s2/s2polyline.cc
+@@ -474,6 +474,16 @@ struct SearchState {
+   int j;
+   bool i_in_progress;
+ };
++
++// The ordering chosen has no special meaning. Newer libc++ compares std::less<T>
++// keys through operator<, so the ordering must be available as an operator.
++inline bool operator<(SearchState const& lhs, SearchState const& rhs) {
++  if (lhs.i < rhs.i) return true;
++  if (lhs.i > rhs.i) return false;
++  if (lhs.j < rhs.j) return true;
++  if (lhs.j > rhs.j) return false;
++  return !lhs.i_in_progress && rhs.i_in_progress;
++}
+ }  // namespace
+ 
+ namespace std {
+@@ -482,11 +492,7 @@ struct less<SearchState> {
+   // This operator is needed for storing SearchStates in a set.  The ordering
+   // chosen has no special meaning.
+   inline bool operator()(SearchState const& lhs, SearchState const& rhs) const {
+-    if (lhs.i < rhs.i) return true;
+-    if (lhs.i > rhs.i) return false;
+-    if (lhs.j < rhs.j) return true;
+-    if (lhs.j > rhs.j) return false;
+-    return !lhs.i_in_progress && rhs.i_in_progress;
++    return lhs < rhs;
+   }
+ };
+ }  // namespace std
+diff --git a/src/third_party/zlib-1.2.11/zutil.h b/src/third_party/zlib-1.2.11/zutil.h
+index b079ea6a..7439d6c8 100644
+--- a/src/third_party/zlib-1.2.11/zutil.h
++++ b/src/third_party/zlib-1.2.11/zutil.h
+@@ -130,7 +130,7 @@ extern z_const char * const z_errmsg[10]; /* indexed by 2-zlib_error */
+ #  endif
+ #endif
+ 
+-#if defined(MACOS) || defined(TARGET_OS_MAC)
++#if defined(MACOS)
+ #  define OS_CODE  7
+ #  ifndef Z_SOLO
+ #    if defined(__MWERKS__) && __dest_os != __be_os && __dest_os != __win32_os

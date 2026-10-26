@@ -66,10 +66,13 @@ if(SYSTEM_WINDOWS)
         "${OpenSSL_DIR}/libcrypto-1_1-x64.dll"
         DESTINATION ${bin_dir})
 elseif(SYSTEM_MACOSX)
+    # Resolve the unversioned symlinks, so both OpenSSL 1.1 and 3.x builds work
+    get_filename_component(OpenSSL_SSL_LIB "${OpenSSL_DIR}/libssl.dylib" REALPATH)
+    get_filename_component(OpenSSL_CRYPTO_LIB "${OpenSSL_DIR}/libcrypto.dylib" REALPATH)
     install(
         FILES 
-        "${OpenSSL_DIR}/libssl.1.1.dylib"
-        "${OpenSSL_DIR}/libcrypto.1.1.dylib"
+        "${OpenSSL_SSL_LIB}"
+        "${OpenSSL_CRYPTO_LIB}"
         DESTINATION ${lib_dir}/lib)
 elseif(SYSTEM_LINUX)
     install(
@@ -101,6 +104,10 @@ SET(QT_LIBS Core Gui Widgets PrintSupport Network Xml)
 if(NOT SYSTEM_LINUX)
     SET(QT_LIBS ${QT_LIBS} WebEngineWidgets WebEngineCore Quick 
                            QuickWidgets WebChannel Qml Positioning)
+    # Qt 5.14 split QmlModels out of Qml, and Quick links against it
+    if(Qt5Core_VERSION VERSION_GREATER_EQUAL 5.14)
+        SET(QT_LIBS ${QT_LIBS} QmlModels)
+    endif()
 endif()
 install_qt_lib(${QT_LIBS})
 install_qt_plugins(QGifPlugin QICOPlugin)

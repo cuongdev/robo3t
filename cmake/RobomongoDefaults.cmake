@@ -74,5 +74,7 @@ elseif(SYSTEM_MACOSX)
     set(LINK_LIBGROUP_START        "")
     set(LINK_LIBGROUP_END          "")
     set(LINK_WHOLE_ARCHIVE_START   -Wl,-all_load)
-    set(LINK_WHOLE_ARCHIVE_END     -Wl,-noall_load)
+    # -all_load is global in Apple ld, so there is nothing to end. The old "-noall_load"
+    # was a no-op and the new Apple linker (Xcode 15+) rejects it as unknown.
+    set(LINK_WHOLE_ARCHIVE_END     "")
 endif()

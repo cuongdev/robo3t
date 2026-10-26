@@ -45,6 +45,8 @@ set(MongoDB_DEFINITIONS
 	_SILENCE_CXX17_OLD_ALLOCATOR_MEMBERS_DEPRECATION_WARNING 
     # Suppress "warning C4996: std::iterator..." from third_party\mozjs-60
     _SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING
+    # Newer libc++ removed std::unary_function in C++17 mode, but boost 1.70 still uses it
+    _LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION
 )
 
 # Set common compiler include directories

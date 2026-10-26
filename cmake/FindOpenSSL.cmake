@@ -55,7 +55,16 @@ function(from_hex HEX DEC)
 endfunction()
 
 if (OPENSSL_INCLUDE_DIR)
+  # OpenSSL 3.x no longer writes OPENSSL_VERSION_NUMBER as a literal, but has OPENSSL_VERSION_STR
   if(OPENSSL_INCLUDE_DIR AND EXISTS "${OPENSSL_INCLUDE_DIR}/openssl/opensslv.h")
+    file(STRINGS "${OPENSSL_INCLUDE_DIR}/openssl/opensslv.h" openssl_version_str
+         REGEX "^#[\t ]*define[\t ]+OPENSSL_VERSION_STR[\t ]+\"([0-9])+\\.([0-9])+\\.([0-9])+\".*")
+  endif ()
+
+  if(openssl_version_str)
+    string(REGEX REPLACE "^.*OPENSSL_VERSION_STR[\t ]+\"([0-9.]+)\".*$" "\\1"
+           OPENSSL_VERSION "${openssl_version_str}")
+  elseif(OPENSSL_INCLUDE_DIR AND EXISTS "${OPENSSL_INCLUDE_DIR}/openssl/opensslv.h")
     file(STRINGS "${OPENSSL_INCLUDE_DIR}/openssl/opensslv.h" openssl_version_str
          REGEX "^#[\t ]*define[\t ]+OPENSSL_VERSION_NUMBER[\t ]+0x([0-9a-fA-F])+.*")
 

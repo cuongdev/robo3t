@@ -241,3 +241,92 @@ $ sudo yum install mesa-libGL
 $ sudo yum install mesa-libGL-devel
   ```
 
+
+C. Building on Apple Silicon Macs with a modern Xcode
+-------------
+
+Tested in October 2026 on macOS 27.2 with Xcode 27.0 (Apple clang 21) on Apple Silicon.
+
+MongoDB 4.2, which Robo 3T embeds, has no Apple Silicon support, so this recipe builds an
+Intel (x86_64) app that runs through Rosetta. Apple keeps Rosetta fully available only through
+macOS 27, so treat this build as a stopgap.
+
+Things that differ from the steps above:
+
+1. Xcode's compiler runs natively and targets arm64 even when started from an Intel process,
+   so every component must be told to build for x86_64 explicitly.
+2. If Homebrew's binutils is on your `PATH`, its GNU `ar` writes archives that Apple's linker
+   rejects. Pass `/usr/bin/ar` and `/usr/bin/ranlib` explicitly, as shown below.
+3. OpenSSL 1.1.1 is end of life, so this recipe uses OpenSSL 3.5 (LTS).
+4. `bin/configure` loses extra CMake arguments under macOS's bash 3.2, so call CMake directly.
+
+GitHub Actions runs the same steps in `.github/workflows/release.yml`: a manual run builds the
+app, and pushing a `v<version>` tag also publishes a GitHub release.
+
+#### 1. Build Robo 3T Shell (MongoDB 4.2 fork)
+
+[`patches/robomongo-shell-v4.2-modern-macos.patch`](patches/robomongo-shell-v4.2-modern-macos.patch)
+fixes code that newer clang and libc++ reject: Boost 1.70 enums used in constant expressions,
+an `s2` comparator, a zlib `fdopen` macro clash with the macOS SDK, and a SpiderMonkey move
+constructor that referred to the wrong member. `MONGO_VERSION` is required because a shallow
+clone has no tags.
+
+```sh
+git clone --depth 1 --branch roboshell-v4.2 https://github.com/paralect/robomongo-shell.git
+cd robomongo-shell
+git apply /path/to/robomongo/docs/patches/robomongo-shell-v4.2-modern-macos.patch
+
+arch -x86_64 /usr/bin/python3 -m venv ../venv-x86
+arch -x86_64 ../venv-x86/bin/pip install -r etc/pip/compile-requirements.txt
+
+F="-arch x86_64 -mmacosx-version-min=11.0 -Wno-unused-function -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION"
+arch -x86_64 ../venv-x86/bin/python buildscripts/scons.py mongo --ssl MONGO_VERSION=4.2.6 \
+    "CCFLAGS=$F" "LINKFLAGS=-arch x86_64 -mmacosx-version-min=11.0" \
+    --disable-warnings-as-errors -j16
+```
+
+#### 2. Install Qt 5.15.2 (x86_64)
+
+```sh
+arch -x86_64 ../venv-x86/bin/pip install aqtinstall
+arch -x86_64 ../venv-x86/bin/aqt install-qt mac desktop 5.15.2 clang_64 -m qtwebengine \
+    -O Qt -b https://download.qt.io/
+```
+
+Check that `Qt/5.15.2/clang_64/lib/QtWebEngineWidgets.framework` exists afterwards. Some
+download mirrors fail partway and the installer still exits successfully.
+
+#### 3. Build OpenSSL 3.5 (x86_64)
+
+Download the latest `openssl-3.5.x.tar.gz` and its `.sha256` file from
+https://github.com/openssl/openssl/releases and compare them with `shasum -a 256` first.
+
+```sh
+tar -xzf openssl-3.5.x.tar.gz && cd openssl-3.5.x
+./Configure darwin64-x86_64-cc shared no-ssl3 no-comp no-tests -mmacosx-version-min=11.0 \
+    AR=/usr/bin/ar RANLIB=/usr/bin/ranlib
+make -j16 build_libs
+
+install_name_tool -id "@rpath/lib/libcrypto.3.dylib" libcrypto.3.dylib
+install_name_tool -id "@rpath/lib/libssl.3.dylib" \
+    -change /usr/local/lib/libcrypto.3.dylib @rpath/lib/libcrypto.3.dylib libssl.3.dylib
+codesign -f -s - libssl.3.dylib libcrypto.3.dylib
+
+# For robo_unit_tests
+mkdir -p lib && cp -a libssl.3.dylib libcrypto.3.dylib lib/
+```
+
+#### 4. Build Robo 3T
+
+```sh
+mkdir -p build/release && cd build/release
+cmake -D "CMAKE_PREFIX_PATH=/path/to/Qt/5.15.2/clang_64;/path/to/robomongo-shell;/path/to/openssl-3.5.x" \
+      -D CMAKE_BUILD_TYPE=Release -D "CMAKE_INSTALL_PREFIX=$PWD/install" \
+      -D CMAKE_OSX_ARCHITECTURES=x86_64 -D CMAKE_AR=/usr/bin/ar -D CMAKE_RANLIB=/usr/bin/ranlib \
+      ../..
+cmake --build . -- -j16
+./src/robomongo-unit-tests/robo_unit_tests
+
+# Self contained app bundle in build/release/install/Robo 3T.app
+cmake --build . --target install
+```
