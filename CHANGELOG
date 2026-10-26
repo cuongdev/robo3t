@@ -2,6 +2,21 @@
 Download latest version: 
 https://robomongo.org/download
 
+Robo 3T 1.5.0 (Oct/2026), unofficial community build
+  New Features:
+  * App Name: choose the name each connection reports to MongoDB (server logs,
+    db.currentOp()), with a global default in Options, Default App Name ("application")
+  * Namespaces: group connections in the connections list and in the Connect menu
+  * Export all connections to a file and import them again. Passwords are only written
+    when encrypted with a passphrase (AES 256 GCM, PBKDF2 HMAC SHA256)
+  Fixes:
+  * SSH tunnel: libssh2 1.11.1 works with OpenSSL 3 and signs RSA keys with SHA2, which
+    OpenSSH 8.8 and newer require
+  Build:
+  * Builds on Apple Silicon Macs with current Xcode (Intel app that runs through Rosetta)
+  * OpenSSL 3.5 (LTS) replaces OpenSSL 1.1.1, which is end of life
+  * GitHub Actions workflow that builds and publishes macOS releases
+
 Robo 3T 1.4.4 (Aug/2021)
   New Features:
   - Support for Standard Connection String Format (Mongo URI)
