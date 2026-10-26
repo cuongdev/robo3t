@@ -231,13 +231,26 @@ jobs:
       - name: Check signing secrets
         id: signing
         env:
-          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: |
-          if [ -n "$CERTIFICATE_P12" ]; then
+          # Only checks which secrets are set, never prints their values
+          missing=()
+          for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD MACOS_NOTARY_APPLE_ID \
+                      MACOS_NOTARY_TEAM_ID MACOS_NOTARY_PASSWORD; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -eq 0 ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
+          elif [ ${#missing[@]} -eq 5 ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Signing secrets are not set, keeping the ad hoc signed build"
+          else
+            echo "::error::Signing is only partly set up. Missing secrets: ${missing[*]}"
+            exit 1
           fi
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
