@@ -1,0 +1,241 @@
+name: Release
+
+# Builds the macOS app (Intel, runs on Apple Silicon through Rosetta) and, for v* tags,
+# publishes it as a GitHub release. Run it by hand (workflow_dispatch) to only build.
+# The steps follow docs/BuildRobo3TOnMacAndLinux.md, section C.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Pinned build dependencies
+  ROBO_SHELL_REPO: https://github.com/paralect/robomongo-shell.git
+  ROBO_SHELL_COMMIT: 6cdb6abcd43f9dba8f198d1e98deda432b894d7f   # branch roboshell-v4.2
+  MONGO_VERSION: 4.2.6
+  QT_VERSION: 5.15.2
+  AQTINSTALL_VERSION: 3.3.0
+  OPENSSL_VERSION: 3.5.9
+  OPENSSL_SHA256: 603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
+  MACOS_MIN: "11.0"
+
+jobs:
+  build-macos:
+    name: Build macOS app
+    runs-on: macos-15
+    timeout-minutes: 360
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          major=$(sed -nE 's/^set\(PROJECT_VERSION_MAJOR "([0-9]+)"\)/\1/p' CMakeLists.txt)
+          minor=$(sed -nE 's/^set\(PROJECT_VERSION_MINOR "([0-9]+)"\)/\1/p' CMakeLists.txt)
+          patch=$(sed -nE 's/^set\(PROJECT_VERSION_PATCH "([0-9]+)"\)/\1/p' CMakeLists.txt)
+          version="$major.$minor.$patch"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in CMakeLists.txt"
+            exit 1
+          fi
+
+      - name: Prepare environment
+        id: env
+        run: |
+          echo "DEPS=$RUNNER_TEMP/deps" >> "$GITHUB_ENV"
+          echo "JOBS=$(sysctl -n hw.ncpu)" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/deps"
+          # Qt build tools (moc, rcc, uic) and the unit tests are Intel binaries
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          xcodebuild -version
+          echo "xcode=$(xcodebuild -version | head -1 | tr ' ' '_')" >> "$GITHUB_OUTPUT"
+          # Python 3.9 from Xcode: the SCons bundled with MongoDB 4.2 does not run on newer Pythons
+          /usr/bin/python3 -m venv "$RUNNER_TEMP/deps/venv"
+          "$RUNNER_TEMP/deps/venv/bin/pip" install --quiet --upgrade pip "aqtinstall==$AQTINSTALL_VERSION"
+
+      - name: Restore Qt
+        id: qt-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/deps/Qt
+          key: qt-${{ env.QT_VERSION }}-clang_64-qtwebengine-v1
+
+      - name: Install Qt
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        run: |
+          QT_LIB="$DEPS/Qt/$QT_VERSION/clang_64/lib"
+          for attempt in 1 2 3; do
+            "$DEPS/venv/bin/aqt" install-qt mac desktop "$QT_VERSION" clang_64 -m qtwebengine \
+              -O "$DEPS/Qt" -b https://download.qt.io/ && [ -d "$QT_LIB/QtWebEngineWidgets.framework" ] && break
+            echo "Qt install attempt $attempt was incomplete, retrying"
+            sleep 30
+          done
+          # aqt can exit successfully after a mirror fails, so check the result
+          test -d "$QT_LIB/QtWebEngineWidgets.framework"
+          test -d "$QT_LIB/QtQmlModels.framework"
+
+      - name: Restore OpenSSL
+        id: openssl-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/deps/openssl
+          key: openssl-${{ env.OPENSSL_VERSION }}-x86_64-macos${{ env.MACOS_MIN }}-v1
+
+      - name: Build OpenSSL
+        if: steps.openssl-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$DEPS/download" && cd "$DEPS/download"
+          gh release download "openssl-$OPENSSL_VERSION" -R openssl/openssl -p "openssl-$OPENSSL_VERSION.tar.gz"
+          echo "$OPENSSL_SHA256  openssl-$OPENSSL_VERSION.tar.gz" | shasum -a 256 -c -
+          tar -xzf "openssl-$OPENSSL_VERSION.tar.gz"
+          mv "openssl-$OPENSSL_VERSION" "$DEPS/openssl"
+          cd "$DEPS/openssl"
+          ./Configure darwin64-x86_64-cc shared no-ssl3 no-comp no-tests "-mmacosx-version-min=$MACOS_MIN" \
+            AR=/usr/bin/ar RANLIB=/usr/bin/ranlib
+          make -j"$JOBS" build_libs
+          install_name_tool -id "@rpath/lib/libcrypto.3.dylib" libcrypto.3.dylib
+          install_name_tool -id "@rpath/lib/libssl.3.dylib" \
+            -change /usr/local/lib/libcrypto.3.dylib @rpath/lib/libcrypto.3.dylib libssl.3.dylib
+          codesign --force --sign - libssl.3.dylib libcrypto.3.dylib
+          # For robo_unit_tests
+          mkdir -p lib && cp -a libssl.3.dylib libcrypto.3.dylib lib/
+
+      - name: Restore Robo 3T Shell (MongoDB 4.2 fork)
+        id: shell-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/deps/robomongo-shell
+          key: robo-shell-${{ env.ROBO_SHELL_COMMIT }}-${{ hashFiles('docs/patches/robomongo-shell-v4.2-modern-macos.patch') }}-${{ steps.env.outputs.xcode }}-macos${{ env.MACOS_MIN }}-v1
+
+      - name: Build Robo 3T Shell (MongoDB 4.2 fork)
+        if: steps.shell-cache.outputs.cache-hit != 'true'
+        run: |
+          git init -q "$DEPS/robomongo-shell"
+          cd "$DEPS/robomongo-shell"
+          git remote add origin "$ROBO_SHELL_REPO"
+          git fetch -q --depth 1 origin "$ROBO_SHELL_COMMIT"
+          git checkout -q FETCH_HEAD
+          git apply "$GITHUB_WORKSPACE/docs/patches/robomongo-shell-v4.2-modern-macos.patch"
+          "$DEPS/venv/bin/pip" install --quiet -r etc/pip/compile-requirements.txt
+          FLAGS="-arch x86_64 -mmacosx-version-min=$MACOS_MIN -Wno-unused-function -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION"
+          "$DEPS/venv/bin/python" buildscripts/scons.py mongo --ssl "MONGO_VERSION=$MONGO_VERSION" \
+            "CCFLAGS=$FLAGS" "LINKFLAGS=-arch x86_64 -mmacosx-version-min=$MACOS_MIN" \
+            --disable-warnings-as-errors -j"$JOBS"
+          # The app links these object files directly
+          missing=0
+          for o in $(cat "$GITHUB_WORKSPACE/cmake/mongodb/macosx-release.objects"); do
+            [ -f "$o" ] || { echo "missing: $o"; missing=1; }
+          done
+          exit $missing
+
+      # Saved right away, so a later failure does not throw away this long build
+      - name: Save Robo 3T Shell build
+        if: steps.shell-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/deps/robomongo-shell
+          key: ${{ steps.shell-cache.outputs.cache-primary-key }}
+
+      - name: Build Robo 3T
+        run: |
+          mkdir -p build/release && cd build/release
+          cmake -D "CMAKE_PREFIX_PATH=$DEPS/Qt/$QT_VERSION/clang_64;$DEPS/robomongo-shell;$DEPS/openssl" \
+                -D CMAKE_BUILD_TYPE=Release -D "CMAKE_INSTALL_PREFIX=$PWD/install" \
+                -D CMAKE_OSX_ARCHITECTURES=x86_64 -D CMAKE_AR=/usr/bin/ar -D CMAKE_RANLIB=/usr/bin/ranlib \
+                -Wno-dev ../..
+          cmake --build . -j "$JOBS"
+
+      - name: Unit tests
+        run: build/release/src/robomongo-unit-tests/robo_unit_tests
+
+      - name: Install and check the app bundle
+        run: |
+          cmake --install build/release
+          APP="build/release/install/Robo 3T.app"
+          # Every @rpath library must resolve inside the bundle
+          missing=0
+          while IFS= read -r -d '' f; do
+            file "$f" | grep -q Mach-O || continue
+            for r in $(otool -L "$f" | tail -n +2 | awk '{print $1}' | grep '^@rpath/'); do
+              [ -e "$APP/Contents/Frameworks/${r#@rpath/}" ] || { echo "missing $r (used by $f)"; missing=1; }
+            done
+          done < <(find "$APP" -type f -print0)
+          exit $missing
+
+      - name: Package
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          NAME="robo3t-$VERSION-macos-x86_64"
+          APP="build/release/install/Robo 3T.app"
+          # Ad hoc signature only, the app is not notarized (see the release notes)
+          codesign --force --deep --sign - "$APP"
+          mkdir -p dist dmg-root
+          cp -R "$APP" dmg-root/
+          ln -s /Applications dmg-root/Applications
+          for attempt in 1 2 3; do
+            hdiutil create -volname "Robo 3T $VERSION" -srcfolder dmg-root -ov -format UDZO "dist/$NAME.dmg" && break
+            echo "hdiutil attempt $attempt failed, retrying"
+            sleep 10
+          done
+          test -f "dist/$NAME.dmg"
+          ditto -c -k --keepParent "$APP" "dist/$NAME.zip"
+          cd dist && shasum -a 256 "$NAME.dmg" "$NAME.zip" > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: robo3t-macos
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: build-macos
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: robo3t-macos
+          path: dist
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ needs.build-macos.outputs.version }}
+        run: |
+          {
+            cat .github/release-notes.md
+            echo
+            echo "## Changes"
+            echo
+            echo '```'
+            awk -v v="Robo 3T $VERSION " 'index($0, v) == 1 {p = 1; print; next} p && /^Robo 3T [0-9]/ {exit} p {print}' CHANGELOG
+            echo '```'
+          } > notes.md
+          cat notes.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build-macos.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Robo 3T $VERSION (unofficial community build)" --notes-file notes.md
