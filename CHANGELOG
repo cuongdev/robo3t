@@ -1,6 +1,12 @@
 
-Download latest version: 
+Download latest version:
 https://robomongo.org/download
+
+Robo 3T 1.5.1 (Oct/2026), unofficial community build
+  Fixes:
+  * macOS: the 1.5.0 release was ad hoc signed only, causing a crash
+    (SIGKILL, Code Signature Invalid) on macOS 15. This release is signed
+    with a Developer ID certificate and notarized by Apple.
 
 Robo 3T 1.5.0 (Oct/2026), unofficial community build
   New Features:
